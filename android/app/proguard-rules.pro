@@ -126,3 +126,18 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+
+## ============================================================================
+## GOOGLE PLAY CORE (Flutter Deferred Components)
+## ============================================================================
+## Flutter includes Play Store deferred component code that references Play Core
+## Even if we don't use it, R8 sees the references and complains
+## Keep these classes to prevent R8 errors
+
+-keep class com.google.android.play.core.** { *; }
+-dontwarn com.google.android.play.core.**
+
+## Alternative: If the above doesn't work, you can also keep the Flutter classes that reference them
+-keep class io.flutter.embedding.engine.deferredcomponents.** { *; }
+-keep class io.flutter.app.FlutterPlayStoreSplitApplication { *; }
