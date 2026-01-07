@@ -55,6 +55,8 @@ jobs:
           flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
+          cache-key: 'flutter-:os:-:channel:-:version:-:arch:-:hash:'
+          cache-path: '${{ runner.tool_cache }}/flutter/:channel:-:version:-:arch:'
       
       - name: Verify Flutter installation
         run: |
@@ -62,10 +64,17 @@ jobs:
           flutter doctor -v
       
       - name: Get dependencies
-        run: flutter pub get
+        run: |
+          flutter pub cache clean --force || true
+          flutter pub get
       
       - name: Verify dependencies
-        run: flutter pub get --offline
+        run: |
+          echo "Checking drift versions..."
+          flutter pub deps | grep drift
+          echo ""
+          echo "Verifying no version conflicts..."
+          flutter pub get --offline
       
       - name: Run code generation (Drift)
         run: |
