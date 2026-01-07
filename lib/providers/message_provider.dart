@@ -488,13 +488,13 @@ class MessageProvider with ChangeNotifier {
     );
     await _updateQueueCount();
 
-    // Send via WebSocket if online
-    if (_isOnline && _wsService.status == ConnectionStatus.connected) {
-      _wsService.sendChatMessage(
-        clientId: clientId,
-        recipientId: recipientId,
-        content: content,
-      );
+    // Best-effort immediate send (queue will retry if this fails).
+    if (_isOnline) {
+      try {
+        await _sendQueuedMessage(clientId, recipientId, content);
+      } catch (_) {
+        // Ignore: queued retry will handle it.
+      }
     }
   }
 
@@ -760,18 +760,20 @@ class MessageProvider with ChangeNotifier {
   Future<void> _sendQueuedMessage(String clientId, int recipientId, String content) async {
     // Check network connectivity
     if (!_isOnline) {
-      return;
+      throw Exception('offline');
     }
 
     // Ensure WebSocket is connected
     if (_wsService.status != ConnectionStatus.connected) {
       await _wsService.connect();
-      
-      // Give it a moment to connect
-      await Future.delayed(const Duration(milliseconds: 500));
-      
+
+      // If a connect attempt is already in-flight (or handshake is slow on high RTT),
+      // wait a bit longer for the status to flip to connected.
       if (_wsService.status != ConnectionStatus.connected) {
-        return;
+        final ok = await _waitForWsConnected(const Duration(seconds: 12));
+        if (!ok) {
+          throw Exception('ws_not_connected');
+        }
       }
     }
 
@@ -780,6 +782,31 @@ class MessageProvider with ChangeNotifier {
       recipientId: recipientId,
       content: content,
     );
+  }
+
+  Future<bool> _waitForWsConnected(Duration timeout) async {
+    if (_wsService.status == ConnectionStatus.connected) return true;
+
+    final completer = Completer<bool>();
+    StreamSubscription<ConnectionStatus>? sub;
+    Timer? timer;
+
+    sub = _wsService.statusStream.listen((status) {
+      if (status == ConnectionStatus.connected && !completer.isCompleted) {
+        completer.complete(true);
+      }
+    });
+
+    timer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.complete(false);
+      }
+    });
+
+    final result = await completer.future;
+    await sub.cancel();
+    timer.cancel();
+    return result;
   }
 
   Future<void> _updateQueueCount() async {
