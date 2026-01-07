@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network Security Configuration for OM Messenger
+    
+    WHY IS THIS NEEDED?
+    ===================
+    Starting with Android 9 (API 28), cleartext (HTTP) traffic is blocked by default.
+    This is a security feature to prevent man-in-the-middle attacks.
+    
+    Since you're using HTTPS/WSS (api-om.wexun.tech), you DON'T need cleartext config.
+    
+    However, this file is USEFUL for:
+    1. Development/testing with local servers (http://10.0.2.2:8080)
+    2. Custom certificate pinning (prevent fake SSL certificates)
+    3. Trusting self-signed certificates during development
+    
+    PRODUCTION: This file can remain as-is (secure by default)
+    DEVELOPMENT: Uncomment the cleartextTrafficPermitted section if needed
+-->
+<network-security-config>
+    <!-- Production: Trust system certificates (default Android behavior) -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- 
+        DEVELOPMENT ONLY: Uncomment this to allow local testing with HTTP
+        Comment out before releasing to production!
+    -->
+    <!--
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">192.168.1.0</domain>
+    </domain-config>
+    -->
+    
+    <!--
+        CERTIFICATE PINNING (Optional, Advanced Security)
+        Pins your server's SSL certificate to prevent man-in-the-middle attacks
+        even if device trusts a malicious certificate authority.
+        
+        To enable:
+        1. Get your server's certificate SHA-256 fingerprint:
+           openssl s_client -connect api-om.wexun.tech:443 | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64
+        2. Uncomment and add the pin below
+    -->
+    <!--
+    <domain-config>
+        <domain includeSubdomains="true">api-om.wexun.tech</domain>
+        <pin-set expiration="2027-01-01">
+            <pin digest="SHA-256">YOUR_CERTIFICATE_SHA256_HERE</pin>
+            <pin digest="SHA-256">BACKUP_CERTIFICATE_SHA256_HERE</pin>
+        </pin-set>
+    </domain-config>
+    -->
+</network-security-config>
