@@ -127,7 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   backgroundColor: Theme.of(context).colorScheme.primary,
                   child: Text(
                     widget.user.username[0].toUpperCase(),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onPrimary),
                   ),
                 ),
                 if (widget.user.isOnline)
@@ -158,7 +158,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     widget.user.fullName.isNotEmpty
                         ? widget.user.fullName
                         : widget.user.username,
-                    style: const TextStyle(fontSize: 16),
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                   if (isOtherUserTyping)
                     const Text(
@@ -299,76 +299,86 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final timeText = DateFormat('HH:mm').format(message.createdAt);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final bubbleColor = isMe
+        ? colorScheme.primary
+        : (Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xFF17212B)
+            : const Color(0xFFF0F0F0));
+
+    final textColor = isMe ? colorScheme.onPrimary : colorScheme.onSurface;
+    final metaColor = isMe
+        ? colorScheme.onPrimary.withOpacity(0.75)
+        : colorScheme.onSurface.withOpacity(0.55);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-        children: [
-          if (!isMe) const SizedBox(width: 48),
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isMe
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).brightness == Brightness.dark
-                        ? const Color(0xFF17212B)
-                        : const Color(0xFFF0F0F0),
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: Radius.circular(isMe ? 18 : 4),
-                  bottomRight: Radius.circular(isMe ? 4 : 18),
-                ),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            margin: EdgeInsets.only(
+              left: isMe ? 48 : 0,
+              right: isMe ? 0 : 48,
+            ),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isMe ? 18 : 6),
+                bottomRight: Radius.circular(isMe ? 6 : 18),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
                     message.content,
                     style: TextStyle(
                       fontSize: 16,
-                      color: isMe ? Colors.white : null,
+                      color: textColor,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        timeText,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: isMe
-                              ? Colors.white.withOpacity(0.7)
-                              : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                        ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      timeText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: metaColor,
                       ),
-                      if (isMe) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          message.isRead
-                              ? Icons.done_all
-                              : message.isDelivered
-                                  ? Icons.done_all
-                                  : message.status == 'sent'
-                                      ? Icons.done
-                                      : Icons.schedule,
-                          size: 14,
-                          color: message.isRead
-                              ? Colors.blue
-                              : Colors.white.withOpacity(0.7),
-                        ),
-                      ],
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        message.isRead
+                            ? Icons.done_all
+                            : message.isDelivered
+                                ? Icons.done_all
+                                : message.status == 'sent'
+                                    ? Icons.done
+                                    : Icons.schedule,
+                        size: 14,
+                        color: metaColor,
+                      ),
                     ],
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
             ),
           ),
-          if (isMe) const SizedBox(width: 48),
-        ],
+        ),
       ),
     );
   }

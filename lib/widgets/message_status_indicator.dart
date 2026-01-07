@@ -14,6 +14,8 @@ class MessageStatusIndicator extends StatelessWidget {
     IconData icon;
     Color color;
 
+    final colorScheme = Theme.of(context).colorScheme;
+
     switch (message.status) {
       case 'pending':
         icon = Icons.schedule;
@@ -29,7 +31,7 @@ class MessageStatusIndicator extends StatelessWidget {
         break;
       case 'read':
         icon = Icons.done_all;
-        color = Colors.blue;
+        color = colorScheme.primary;
         break;
       case 'failed':
         icon = Icons.error_outline;

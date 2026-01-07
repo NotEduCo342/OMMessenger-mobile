@@ -34,21 +34,25 @@ class ThemeProvider with ChangeNotifier {
   }
 
   ThemeData get lightTheme {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF3390EC), // Telegram blue
+      brightness: Brightness.light,
+    );
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF3390EC), // Telegram blue
-        brightness: Brightness.light,
-      ),
-      appBarTheme: const AppBarTheme(
+      colorScheme: colorScheme,
+      appBarTheme: AppBarTheme(
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
-        backgroundColor: Color(0xFF3390EC),
-        foregroundColor: Colors.white,
+        backgroundColor: colorScheme.surface,
+        foregroundColor: colorScheme.onSurface,
+        surfaceTintColor: Colors.transparent,
       ),
-      scaffoldBackgroundColor: Colors.white,
-      cardColor: Colors.white,
+      scaffoldBackgroundColor: colorScheme.surface,
+      cardColor: colorScheme.surface,
       dividerColor: const Color(0xFFE0E0E0),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -61,8 +65,8 @@ class ThemeProvider with ChangeNotifier {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF3390EC),
-          foregroundColor: Colors.white,
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -76,20 +80,24 @@ class ThemeProvider with ChangeNotifier {
   }
 
   ThemeData get darkTheme {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF3390EC), // Telegram blue
+      brightness: Brightness.dark,
+    );
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF3390EC), // Telegram blue
-        brightness: Brightness.dark,
-      ),
+      colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFF0E1621), // Telegram X dark
       cardColor: const Color(0xFF17212B),
       appBarTheme: const AppBarTheme(
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
         backgroundColor: Color(0xFF17212B),
         foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
       ),
       dividerColor: const Color(0xFF222D3A),
       inputDecorationTheme: InputDecorationTheme(
@@ -103,8 +111,8 @@ class ThemeProvider with ChangeNotifier {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF3390EC),
-          foregroundColor: Colors.white,
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
