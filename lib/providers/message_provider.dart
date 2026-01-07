@@ -160,6 +160,14 @@ class MessageProvider with ChangeNotifier {
     // Load conversations from database
     await _loadConversations();
 
+    // Best-effort: refresh conversations from server.
+    // This repopulates the local DB after reinstall/uninstall.
+    try {
+      await refreshConversations();
+    } catch (_) {
+      // Non-fatal.
+    }
+
     // Update pending queue count
     _updateQueueCount();
 
@@ -216,13 +224,93 @@ class MessageProvider with ChangeNotifier {
     }
 
     try {
-      // TODO: Add API endpoint for conversation list
-      // For now, just reload from database
+      await _syncConversationsFromServer();
+      // Reload from DB to ensure UI stays consistent with persisted state.
       await _loadConversations();
     } catch (e) {
       print('Error refreshing conversations: $e');
       rethrow;
     }
+  }
+
+  Future<void> _syncConversationsFromServer() async {
+    const limit = 100;
+    String? cursorCreatedAt;
+    int? cursorMessageId;
+
+    // Cap pages to prevent infinite loops if server misbehaves.
+    for (var page = 0; page < 20; page++) {
+      var endpoint = '/conversations?limit=$limit';
+      if (cursorCreatedAt != null && cursorMessageId != null) {
+        endpoint += '&cursor_created_at=${Uri.encodeComponent(cursorCreatedAt)}'
+            '&cursor_message_id=$cursorMessageId';
+      }
+
+      final response = await _apiService.get(endpoint);
+      if (response is! Map) return;
+
+      final items = response['conversations'];
+      if (items is! List) return;
+
+      for (final item in items) {
+        if (item is! Map) continue;
+
+        final peerJson = item['peer'];
+        if (peerJson is! Map) continue;
+
+        final peer = User.fromJson(Map<String, dynamic>.from(peerJson));
+        final unreadCount = (item['unread_count'] is int) ? item['unread_count'] as int : 0;
+
+        Message? lastMessage;
+        final lastMessageJson = item['last_message'];
+        if (lastMessageJson is Map) {
+          lastMessage = Message.fromJson(Map<String, dynamic>.from(lastMessageJson));
+        }
+
+        DateTime? lastActivity;
+        final lastActivityStr = item['last_activity'];
+        if (lastActivityStr is String) {
+          try {
+            lastActivity = DateTime.parse(lastActivityStr);
+          } catch (_) {
+            lastActivity = null;
+          }
+        }
+        lastActivity ??= lastMessage?.createdAt;
+
+        _conversations[peer.id] = Conversation(
+          otherUser: peer,
+          lastMessage: lastMessage,
+          unreadCount: unreadCount,
+          lastActivity: lastActivity,
+        );
+
+        await _database.upsertConversation(ConversationsCompanion.insert(
+          otherUserId: peer.id,
+          otherUsername: peer.username,
+          otherFullName: peer.fullName,
+          otherAvatar: Value(peer.avatar),
+          otherIsOnline: Value(peer.isOnline),
+          lastMessageContent: Value(lastMessage?.content),
+          lastMessageTime: Value(lastMessage?.createdAt),
+          unreadCount: Value(unreadCount),
+          updatedAt: DateTime.now(),
+        ));
+      }
+
+      final nextCreatedAt = response['next_cursor_created_at'];
+      final nextMessageId = response['next_cursor_message_id'];
+
+      if (nextCreatedAt is String && (nextMessageId is int || nextMessageId is num)) {
+        cursorCreatedAt = nextCreatedAt;
+        cursorMessageId = (nextMessageId as num).toInt();
+        continue;
+      }
+
+      break;
+    }
+
+    notifyListeners();
   }
 
   Future<void> loadMessages(int userId, {int limit = 20, bool loadMore = false}) async {
