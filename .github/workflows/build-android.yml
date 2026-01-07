@@ -1,0 +1,260 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/build-android.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+      split_per_abi:
+        description: 'Split APK per ABI (smaller files)'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build Flutter APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.4'
+          channel: 'stable'
+          cache: true
+      
+      - name: Verify Flutter installation
+        run: |
+          flutter --version
+          flutter doctor -v
+      
+      - name: Get dependencies
+        run: flutter pub get
+      
+      - name: Verify dependencies
+        run: flutter pub get --offline
+      
+      - name: Run code generation (Drift)
+        run: |
+          if grep -q "build_runner" pubspec.yaml; then
+            echo "Running build_runner for code generation..."
+            flutter pub run build_runner build --delete-conflicting-outputs
+          else
+            echo "No build_runner found, skipping code generation"
+          fi
+        continue-on-error: false
+      
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          BUILD_NUMBER=$(echo $VERSION | cut -d'+' -f2)
+          VERSION_NAME=$(echo $VERSION | cut -d'+' -f1)
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "📱 Building version: $VERSION_NAME (build $BUILD_NUMBER)"
+      
+      - name: Determine build configuration
+        id: build_config
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" == "debug" ]; then
+            echo "type=debug" >> $GITHUB_OUTPUT
+            echo "split_abi=false" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.split_per_abi }}" == "false" ]; then
+            echo "type=release" >> $GITHUB_OUTPUT
+            echo "split_abi=false" >> $GITHUB_OUTPUT
+          else
+            echo "type=release" >> $GITHUB_OUTPUT
+            echo "split_abi=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Build APK (Release - Split per ABI)
+        if: steps.build_config.outputs.type == 'release' && steps.build_config.outputs.split_abi == 'true'
+        run: |
+          echo "🔨 Building release APK split per ABI..."
+          flutter build apk --release --split-per-abi
+      
+      - name: Build APK (Release - Universal)
+        if: steps.build_config.outputs.type == 'release' && steps.build_config.outputs.split_abi == 'false'
+        run: |
+          echo "🔨 Building universal release APK..."
+          flutter build apk --release
+      
+      - name: Build APK (Debug)
+        if: steps.build_config.outputs.type == 'debug'
+        run: |
+          echo "🔨 Building debug APK..."
+          flutter build apk --debug
+      
+      - name: List built APKs
+        run: |
+          echo "📦 Built APK files:"
+          ls -lh build/app/outputs/flutter-apk/
+      
+      - name: Rename APK files
+        run: |
+          cd build/app/outputs/flutter-apk/
+          
+          # Release APKs
+          if [ -f "app-release.apk" ]; then
+            mv app-release.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}.apk
+            echo "✅ Created: OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}.apk"
+          fi
+          
+          if [ -f "app-armeabi-v7a-release.apk" ]; then
+            mv app-armeabi-v7a-release.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-armeabi-v7a.apk
+            echo "✅ Created: OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-armeabi-v7a.apk"
+          fi
+          
+          if [ -f "app-arm64-v8a-release.apk" ]; then
+            mv app-arm64-v8a-release.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-arm64-v8a.apk
+            echo "✅ Created: OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-arm64-v8a.apk"
+          fi
+          
+          if [ -f "app-x86_64-release.apk" ]; then
+            mv app-x86_64-release.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-x86_64.apk
+            echo "✅ Created: OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-x86_64.apk"
+          fi
+          
+          # Debug APK
+          if [ -f "app-debug.apk" ]; then
+            mv app-debug.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-debug.apk
+            echo "✅ Created: OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-debug.apk"
+          fi
+          
+          echo ""
+          echo "📦 Final APK files:"
+          ls -lh OMMessenger-*.apk
+      
+      - name: Calculate APK checksums
+        id: checksums
+        run: |
+          cd build/app/outputs/flutter-apk/
+          echo "## 🔐 APK Checksums (SHA256)" > checksums.txt
+          echo "" >> checksums.txt
+          for apk in OMMessenger-*.apk; do
+            if [ -f "$apk" ]; then
+              sha256sum "$apk" >> checksums.txt
+            fi
+          done
+          cat checksums.txt
+      
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMMessenger-APKs-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
+          path: |
+            build/app/outputs/flutter-apk/OMMessenger-*.apk
+            build/app/outputs/flutter-apk/checksums.txt
+          retention-days: 30
+          if-no-files-found: error
+      
+      - name: Create Build Summary
+        if: always()
+        run: |
+          cd build/app/outputs/flutter-apk/
+          
+          echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📱 Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.version_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Number:** ${{ steps.version.outputs.build_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Type:** ${{ steps.build_config.outputs.type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Split per ABI:** ${{ steps.build_config.outputs.split_abi }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📦 APK Files" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if ls OMMessenger-*.apk 1> /dev/null 2>&1; then
+            echo "| File | Size | Architecture |" >> $GITHUB_STEP_SUMMARY
+            echo "|------|------|--------------|" >> $GITHUB_STEP_SUMMARY
+            for apk in OMMessenger-*.apk; do
+              SIZE=$(ls -lh "$apk" | awk '{print $5}')
+              if [[ $apk == *"arm64-v8a"* ]]; then
+                ARCH="ARM64 (64-bit) - **Recommended**"
+              elif [[ $apk == *"armeabi-v7a"* ]]; then
+                ARCH="ARMv7 (32-bit) - Older devices"
+              elif [[ $apk == *"x86_64"* ]]; then
+                ARCH="x86_64 - Emulators/Intel devices"
+              elif [[ $apk == *"debug"* ]]; then
+                ARCH="Universal - Debug build"
+              else
+                ARCH="Universal - All architectures"
+              fi
+              echo "| \`$apk\` | $SIZE | $ARCH |" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "❌ No APK files found!" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🔐 Checksums" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "checksums.txt" ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat checksums.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📥 Download" >> $GITHUB_STEP_SUMMARY
+          echo "Download the APK artifacts from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📝 Installation Instructions" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the APK file for your device architecture" >> $GITHUB_STEP_SUMMARY
+          echo "2. Enable \"Install from Unknown Sources\" in Android settings" >> $GITHUB_STEP_SUMMARY
+          echo "3. Open the downloaded APK and install" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**Recommended APK:** \`arm64-v8a\` for most modern Android devices (2019+)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Report build failure
+        if: failure()
+        run: |
+          echo "## ❌ Build Failed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the build logs above for error details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Common Issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency resolution failures" >> $GITHUB_STEP_SUMMARY
+          echo "- Code generation errors (build_runner)" >> $GITHUB_STEP_SUMMARY
+          echo "- Android build configuration issues" >> $GITHUB_STEP_SUMMARY
+          echo "- Missing or incorrect Flutter version" >> $GITHUB_STEP_SUMMARY

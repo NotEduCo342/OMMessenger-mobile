@@ -1,0 +1,295 @@
+name: Create Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.1)'
+        required: true
+        type: string
+      build_number:
+        description: 'Build number (e.g., 2)'
+        required: true
+        type: string
+      changelog:
+        description: 'Release notes/changelog'
+        required: true
+        type: string
+        default: 'Bug fixes and improvements'
+      force_update:
+        description: 'Force update required?'
+        required: true
+        type: boolean
+        default: false
+      min_supported_build:
+        description: 'Minimum supported build number'
+        required: true
+        type: string
+        default: '1'
+      is_prerelease:
+        description: 'Mark as pre-release?'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  validate:
+    name: Validate Release Parameters
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      build_number: ${{ steps.validate.outputs.build_number }}
+    
+    steps:
+      - name: Validate version format
+        id: validate
+        run: |
+          # Validate version format (e.g., 1.0.0, 1.0.0-beta.1)
+          if [[ ! "${{ github.event.inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "❌ Invalid version format: ${{ github.event.inputs.version }}"
+            echo "Expected format: X.Y.Z or X.Y.Z-beta.N"
+            exit 1
+          fi
+          
+          # Validate build number is numeric
+          if [[ ! "${{ github.event.inputs.build_number }}" =~ ^[0-9]+$ ]]; then
+            echo "❌ Build number must be numeric: ${{ github.event.inputs.build_number }}"
+            exit 1
+          fi
+          
+          # Validate min_supported_build is numeric
+          if [[ ! "${{ github.event.inputs.min_supported_build }}" =~ ^[0-9]+$ ]]; then
+            echo "❌ Minimum supported build must be numeric: ${{ github.event.inputs.min_supported_build }}"
+            exit 1
+          fi
+          
+          # Check min_supported_build <= build_number
+          if [ "${{ github.event.inputs.min_supported_build }}" -gt "${{ github.event.inputs.build_number }}" ]; then
+            echo "❌ Minimum supported build (${{ github.event.inputs.min_supported_build }}) cannot be greater than current build (${{ github.event.inputs.build_number }})"
+            exit 1
+          fi
+          
+          echo "✅ All validations passed"
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          echo "build_number=${{ github.event.inputs.build_number }}" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build Release APKs
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Update version in pubspec.yaml
+        run: |
+          echo "📝 Updating version to ${{ github.event.inputs.version }}+${{ github.event.inputs.build_number }}"
+          sed -i "s/version: .*/version: ${{ github.event.inputs.version }}+${{ github.event.inputs.build_number }}/" pubspec.yaml
+          cat pubspec.yaml | grep "version:"
+      
+      - name: Commit version bump
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add pubspec.yaml
+          git diff --staged --quiet || git commit -m "chore: bump version to ${{ github.event.inputs.version }}+${{ github.event.inputs.build_number }}"
+          echo "COMMIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+      
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.4'
+          channel: 'stable'
+          cache: true
+      
+      - name: Get dependencies
+        run: flutter pub get
+      
+      - name: Run code generation
+        run: |
+          if grep -q "build_runner" pubspec.yaml; then
+            flutter pub run build_runner build --delete-conflicting-outputs
+          fi
+      
+      - name: Build APKs (Split per ABI)
+        run: |
+          echo "🔨 Building release APKs..."
+          flutter build apk --release --split-per-abi
+      
+      - name: Rename APK files
+        run: |
+          cd build/app/outputs/flutter-apk/
+          
+          mv app-armeabi-v7a-release.apk OMMessenger-v${{ github.event.inputs.version }}-b${{ github.event.inputs.build_number }}-armeabi-v7a.apk || true
+          mv app-arm64-v8a-release.apk OMMessenger-v${{ github.event.inputs.version }}-b${{ github.event.inputs.build_number }}-arm64-v8a.apk || true
+          mv app-x86_64-release.apk OMMessenger-v${{ github.event.inputs.version }}-b${{ github.event.inputs.build_number }}-x86_64.apk || true
+          
+          echo "📦 Built APK files:"
+          ls -lh OMMessenger-*.apk
+      
+      - name: Calculate checksums
+        run: |
+          cd build/app/outputs/flutter-apk/
+          sha256sum OMMessenger-*.apk > checksums.txt
+          cat checksums.txt
+      
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: OMMessenger v${{ github.event.inputs.version }} (Build ${{ github.event.inputs.build_number }})
+          body: |
+            ## 📱 OMMessenger v${{ github.event.inputs.version }}
+            
+            **Build Number:** ${{ github.event.inputs.build_number }}  
+            **Release Date:** ${{ github.event.repository.updated_at }}  
+            **Commit:** ${{ env.COMMIT_SHA }}
+            
+            ### ⚠️ Update Information
+            
+            ${{ github.event.inputs.force_update == 'true' && '🔴 **FORCE UPDATE REQUIRED** - Users must update to continue using the app' || '🟢 **Optional Update** - Users can skip this update' }}
+            
+            **Minimum Supported Build:** ${{ github.event.inputs.min_supported_build }}  
+            ${{ github.event.inputs.min_supported_build != github.event.inputs.build_number && format('⚠️ Builds older than {0} are no longer supported', github.event.inputs.min_supported_build) || '' }}
+            
+            ### 📝 Changelog
+            
+            ${{ github.event.inputs.changelog }}
+            
+            ### 📦 Downloads
+            
+            Choose the APK for your device architecture:
+            
+            - **arm64-v8a** (Recommended) - Most modern Android devices (2019+)
+              - Smallest file size, best performance
+              - Use this unless you have an older device
+            
+            - **armeabi-v7a** - Older 32-bit ARM devices (2015-2019)
+              - For devices that don't support 64-bit
+            
+            - **x86_64** - Intel-based Android devices (rare)
+              - Emulators, some tablets
+            
+            ### 🔐 Checksums (SHA256)
+            
+            ```
+            $(cat build/app/outputs/flutter-apk/checksums.txt)
+            ```
+            
+            ### 📲 Installation Instructions
+            
+            1. Download the appropriate APK for your device
+            2. Enable "Install from Unknown Sources" in Android settings
+            3. Open the downloaded APK file
+            4. Follow the installation prompts
+            5. Open OMMessenger and enjoy!
+            
+            ### 🗃️ Database Update (For Backend Server)
+            
+            Run this SQL to update the version in your database:
+            
+            ```sql
+            -- Deactivate all previous versions
+            UPDATE app_versions SET is_active = false WHERE platform = 'android';
+            
+            -- Insert new version
+            INSERT INTO app_versions (
+              platform, 
+              version, 
+              build_number, 
+              download_url, 
+              changelog, 
+              force_update, 
+              min_supported_build, 
+              is_active
+            ) VALUES (
+              'android',
+              '${{ github.event.inputs.version }}',
+              ${{ github.event.inputs.build_number }},
+              'https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/OMMessenger-v${{ github.event.inputs.version }}-b${{ github.event.inputs.build_number }}-arm64-v8a.apk',
+              '${{ github.event.inputs.changelog }}',
+              ${{ github.event.inputs.force_update }},
+              ${{ github.event.inputs.min_supported_build }},
+              true
+            );
+            ```
+            
+            ---
+            
+            **Repository:** ${{ github.repository }}  
+            **Release Tag:** v${{ github.event.inputs.version }}  
+            **Build Workflow:** [View Build Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          draft: false
+          prerelease: ${{ github.event.inputs.is_prerelease }}
+          files: |
+            build/app/outputs/flutter-apk/OMMessenger-*.apk
+            build/app/outputs/flutter-apk/checksums.txt
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Push version commit
+        if: success()
+        run: |
+          git push origin HEAD:${{ github.ref_name }} --tags || echo "⚠️ Could not push version commit"
+      
+      - name: Create Release Summary
+        if: always()
+        run: |
+          echo "## 🎉 Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Number:** ${{ github.event.inputs.build_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Force Update:** ${{ github.event.inputs.force_update }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min Supported Build:** ${{ github.event.inputs.min_supported_build }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pre-release:** ${{ github.event.inputs.is_prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🔗 Release URL" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/${{ github.repository }}/releases/tag/v${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📦 APK Files" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          ls -lh build/app/outputs/flutter-apk/OMMessenger-*.apk >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🗃️ Database Update Required" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**⚠️ IMPORTANT:** Update your backend database with the SQL from the release notes." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Quick command for server:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "psql -U your_user -d om_messenger << 'EOF'" >> $GITHUB_STEP_SUMMARY
+          echo "UPDATE app_versions SET is_active = false WHERE platform = 'android';" >> $GITHUB_STEP_SUMMARY
+          echo "INSERT INTO app_versions (platform, version, build_number, download_url, changelog, force_update, min_supported_build, is_active)" >> $GITHUB_STEP_SUMMARY
+          echo "VALUES ('android', '${{ github.event.inputs.version }}', ${{ github.event.inputs.build_number }}, 'https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/OMMessenger-v${{ github.event.inputs.version }}-b${{ github.event.inputs.build_number }}-arm64-v8a.apk', '${{ github.event.inputs.changelog }}', ${{ github.event.inputs.force_update }}, ${{ github.event.inputs.min_supported_build }}, true);" >> $GITHUB_STEP_SUMMARY
+          echo "EOF" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Report release failure
+        if: failure()
+        run: |
+          echo "## ❌ Release Creation Failed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the workflow logs above for error details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Possible Issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- Build compilation errors" >> $GITHUB_STEP_SUMMARY
+          echo "- Tag already exists (delete the tag first)" >> $GITHUB_STEP_SUMMARY
+          echo "- Permission issues with GitHub token" >> $GITHUB_STEP_SUMMARY
+          echo "- APK files not generated correctly" >> $GITHUB_STEP_SUMMARY
