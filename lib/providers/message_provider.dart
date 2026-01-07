@@ -333,7 +333,7 @@ class MessageProvider with ChangeNotifier {
         );
         
         if (localMessages.isNotEmpty) {
-          _messagesByUser[userId] = localMessages
+          final msgs = localMessages
             .map((dbMsg) => Message(
                     id: dbMsg.serverId ?? dbMsg.id,
                     clientId: dbMsg.clientId,
@@ -348,11 +348,14 @@ class MessageProvider with ChangeNotifier {
                     isRead: dbMsg.isRead,
                     createdAt: dbMsg.createdAt,
                   ))
-              .toList(); // Chronological order
+              .toList();
+          // Sort by message ID ascending (oldest first)
+          msgs.sort((a, b) => a.id.compareTo(b.id));
+          _messagesByUser[userId] = msgs;
           
           // Set initial cursor to oldest message ID
-          if (localMessages.isNotEmpty) {
-            _messageCursors[userId] = localMessages.last.serverId;
+          if (msgs.isNotEmpty) {
+            _messageCursors[userId] = msgs.first.id;
           }
           
           notifyListeners();
@@ -399,12 +402,15 @@ class MessageProvider with ChangeNotifier {
         }
 
         if (loadMore) {
-          // Append to existing messages, avoid duplicates
-          final existingIds = _messagesByUser[userId]!.map((m) => m.clientId).toSet();
-          final newMessages = messages.where((m) => !existingIds.contains(m.clientId ?? '')).toList();
+          // Append to existing messages, avoid duplicates by ID
+          final existingIds = _messagesByUser[userId]!.map((m) => m.id).toSet();
+          final newMessages = messages.where((m) => !existingIds.contains(m.id)).toList();
           _messagesByUser[userId]!.addAll(newMessages);
+          // Re-sort by ID ascending after adding new messages
+          _messagesByUser[userId]!.sort((a, b) => a.id.compareTo(b.id));
         } else {
-          // Replace all messages
+          // Replace all messages and sort by ID ascending
+          messages.sort((a, b) => a.id.compareTo(b.id));
           _messagesByUser[userId] = messages;
           _updateConversation(userId, messages);
 
@@ -469,11 +475,12 @@ class MessageProvider with ChangeNotifier {
       isSentByMe: true,
     ));
 
-    // Keep newest-first ordering in memory
+    // Add to message list (maintain ID-based ordering: ascending by ID)
     final messageList = _messagesByUser.putIfAbsent(recipientId, () => []);
     // Deduplicate by client_id
     messageList.removeWhere((m) => m.clientId == clientId);
-    messageList.insert(0, message);
+    // Pending messages (id=0) go at the end (will be reordered after ACK)
+    messageList.add(message);
     _pendingMessages[clientId] = message;
 
     // Update conversation
@@ -578,13 +585,15 @@ class MessageProvider with ChangeNotifier {
         createdAt: pendingMessage.createdAt,
       );
 
-      // Replace in message list
+      // Replace in message list and re-sort by ID
       final userId = pendingMessage.recipientId!;
       final messages = _messagesByUser[userId];
       if (messages != null) {
         final index = messages.indexWhere((m) => m.clientId == clientId);
         if (index != -1) {
           messages[index] = updatedMessage;
+          // Re-sort by message ID (ascending) to maintain Telegram-style ordering
+          messages.sort((a, b) => a.id.compareTo(b.id));
         }
       }
 
@@ -643,9 +652,13 @@ class MessageProvider with ChangeNotifier {
       updatedAt: message.createdAt,
     ));
 
-    // Keep newest-first ordering in memory
+    // Add to message list and maintain ID-based ordering (ascending)
     final list = _messagesByUser.putIfAbsent(otherUserId, () => []);
-    list.insert(0, message);
+    // Remove duplicate if exists (by client_id or id)
+    list.removeWhere((m) => m.id == message.id || (m.clientId != null && m.clientId == message.clientId));
+    list.add(message);
+    // Sort by message ID ascending (Telegram approach)
+    list.sort((a, b) => a.id.compareTo(b.id));
     _updateConversationWithMessage(otherUserId, message);
     notifyListeners();
 
