@@ -44,6 +44,7 @@ class MessageProvider with ChangeNotifier {
   Stream<ConnectionStatus> get connectionStream => _wsService.statusStream;
   bool get isOnline => _isOnline;
   int get pendingQueueCount => _pendingQueueCount;
+  int? get currentUserId => _currentUser?.id;
   bool hasMoreMessages(int userId) => _hasMoreMessages[userId] ?? true;
 
   List<Message> getMessages(int userId) {
@@ -299,11 +300,11 @@ class MessageProvider with ChangeNotifier {
       isSentByMe: true,
     ));
 
-    // Add to local state at end (newest messages at bottom)
+    // Keep newest-first ordering in memory
     final messageList = _messagesByUser.putIfAbsent(recipientId, () => []);
     // Deduplicate by client_id
     messageList.removeWhere((m) => m.clientId == clientId);
-    messageList.add(message);
+    messageList.insert(0, message);
     _pendingMessages[clientId] = message;
 
     // Update conversation
@@ -465,7 +466,9 @@ class MessageProvider with ChangeNotifier {
       updatedAt: message.createdAt,
     ));
 
-    _messagesByUser.putIfAbsent(otherUserId, () => []).add(message);
+    // Keep newest-first ordering in memory
+    final list = _messagesByUser.putIfAbsent(otherUserId, () => []);
+    list.insert(0, message);
     _updateConversationWithMessage(otherUserId, message);
     notifyListeners();
 
@@ -515,15 +518,18 @@ class MessageProvider with ChangeNotifier {
     if (messages.isEmpty) return;
 
     final lastMessage = messages.first;
+    final existingConv = _conversations[userId];
+    final otherFromLast = (lastMessage.senderId == userId) ? lastMessage.sender : null;
+
     final conversation = Conversation(
-      otherUser: lastMessage.sender ?? User(
-        id: userId,
-        username: 'User $userId',
-        email: '',
-        fullName: 'User $userId',
-        avatar: '',
-        isOnline: false,
-      ),
+      otherUser: otherFromLast ?? existingConv?.otherUser ?? User(
+            id: userId,
+            username: 'User $userId',
+            email: '',
+            fullName: 'User $userId',
+            avatar: '',
+            isOnline: false,
+          ),
       lastMessage: lastMessage,
       unreadCount: 0,
       lastActivity: lastMessage.createdAt,

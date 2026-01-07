@@ -40,8 +40,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onScroll() {
-    // Load more when scrolled to top
-    if (_scrollController.position.pixels <= 100 && !_isLoadingMore) {
+    // With reverse:true, older messages are at the visual top (maxScrollExtent)
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 100 &&
+        !_isLoadingMore) {
       final messageProvider = context.read<MessageProvider>();
       if (messageProvider.hasMoreMessages(widget.user.id)) {
         _loadMoreMessages();
@@ -97,11 +99,11 @@ class _ChatScreenState extends State<ChatScreen> {
       context.read<MessageProvider>().sendTypingIndicator(widget.user.id, false);
     }
 
-    // Scroll to bottom
+    // Scroll to bottom (newest). With reverse:true, that's minScrollExtent.
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          _scrollController.position.minScrollExtent,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -114,6 +116,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final messageProvider = context.watch<MessageProvider>();
     final messages = messageProvider.getMessages(widget.user.id);
     final isOtherUserTyping = messageProvider.isTyping(widget.user.id);
+    final currentUserId = messageProvider.currentUserId;
 
     return Scaffold(
       appBar: AppBar(
@@ -194,12 +197,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       ListView.builder(
                         controller: _scrollController,
+                        reverse: true,
                         padding: const EdgeInsets.all(16),
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           return _MessageBubble(
                             message: messages[index],
-                            isMe: messages[index].senderId == widget.user.id ? false : true,
+                            isMe: currentUserId != null &&
+                                messages[index].senderId == currentUserId,
                           );
                         },
                       ),

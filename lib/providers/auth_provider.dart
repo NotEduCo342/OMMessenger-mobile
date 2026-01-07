@@ -100,6 +100,37 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  Future<User?> updateProfile({String? username, String? fullName}) async {
+    if (_user == null) return null;
+
+    final nextUsername = username?.trim();
+    final nextFullName = fullName?.trim();
+
+    final Map<String, dynamic> body = {};
+    if (nextUsername != null && nextUsername.isNotEmpty && nextUsername != _user!.username) {
+      body['username'] = nextUsername;
+    }
+    if (nextFullName != null && nextFullName.isNotEmpty && nextFullName != _user!.fullName) {
+      body['full_name'] = nextFullName;
+    }
+
+    if (body.isEmpty) return _user;
+
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await _apiService.put('/users/me', body);
+      if (response is Map && response['user'] != null) {
+        _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        return _user;
+      }
+      throw Exception('Invalid response from server');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> _handleAuthResponse(dynamic response) async {
     // Save tokens
     await _storage.write(key: 'access_token', value: response['access_token']);

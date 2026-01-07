@@ -3,13 +3,182 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final _fullNameController = TextEditingController();
+  final _usernameController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  bool _isCheckingUsername = false;
+  bool? _isUsernameAvailable;
+  String? _usernameErrorText;
+  bool _didInitControllers = false;
+  bool _isSaving = false;
+
+  // Debounce to avoid spamming the server while typing.
+  // (No timers/animations beyond this simple UX.)
+  static const _usernameDebounce = Duration(milliseconds: 350);
+  Future<void>? _pendingUsernameCheck;
+
+  @override
+  void dispose() {
+    _fullNameController.dispose();
+    _usernameController.dispose();
+    super.dispose();
+  }
+
+  void _syncFromUser() {
+    final user = context.read<AuthProvider>().user;
+    if (user == null) return;
+    _fullNameController.text = user.fullName;
+    _usernameController.text = user.username;
+    _isUsernameAvailable = null;
+    _usernameErrorText = null;
+  }
+
+  String _normalizedUsernameInput(String raw) {
+    // Mirror backend normalization as closely as possible without duplicating
+    // all validation logic.
+    return raw.trim().toLowerCase();
+  }
+
+  Future<void> _checkUsernameAvailability() async {
+    final auth = context.read<AuthProvider>();
+    final currentUser = auth.user;
+    if (currentUser == null) return;
+
+    final raw = _usernameController.text;
+    final username = _normalizedUsernameInput(raw);
+
+    if (username.isEmpty) {
+      setState(() {
+        _isUsernameAvailable = null;
+        _usernameErrorText = 'Username is required';
+      });
+      return;
+    }
+
+    // If unchanged, treat as valid/available.
+    if (username == currentUser.username) {
+      setState(() {
+        _isUsernameAvailable = true;
+        _usernameErrorText = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isCheckingUsername = true;
+      _usernameErrorText = null;
+      _isUsernameAvailable = null;
+    });
+
+    try {
+      final available = await auth.checkUsernameAvailability(username);
+      if (!mounted) return;
+      setState(() {
+        _isUsernameAvailable = available;
+        _usernameErrorText = available ? null : 'Username is already taken';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingUsername = false;
+        });
+      }
+    }
+  }
+
+  void _onUsernameChanged(String _) {
+    final pending = _pendingUsernameCheck;
+    _pendingUsernameCheck = Future<void>.delayed(_usernameDebounce).then((_) async {
+      if (!mounted) return;
+      if (identical(_pendingUsernameCheck, pending)) {
+        // Another keystroke replaced this one.
+        return;
+      }
+      await _checkUsernameAvailability();
+    });
+  }
+
+  bool _canSave() {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return false;
+    if (_isSaving || _isCheckingUsername) return false;
+
+    final nextFullName = _fullNameController.text.trim();
+    final nextUsername = _normalizedUsernameInput(_usernameController.text);
+
+    final changed = (nextFullName.isNotEmpty && nextFullName != user.fullName) ||
+        (nextUsername.isNotEmpty && nextUsername != user.username);
+    if (!changed) return false;
+
+    if (nextUsername.isEmpty) return false;
+    if (_usernameErrorText != null) return false;
+    if (nextUsername != user.username && _isUsernameAvailable != true) return false;
+
+    return true;
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (!_canSave()) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final auth = context.read<AuthProvider>();
+      final nextFullName = _fullNameController.text.trim();
+      final nextUsername = _normalizedUsernameInput(_usernameController.text);
+
+      await auth.updateProfile(
+        fullName: nextFullName,
+        username: nextUsername,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile updated')),
+      );
+
+      // Re-sync in case server normalizes further.
+      _syncFromUser();
+      setState(() {
+        _didInitControllers = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
     final themeProvider = context.watch<ThemeProvider>();
+
+    if (!_didInitControllers && user != null) {
+      _didInitControllers = true;
+      _syncFromUser();
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -54,6 +223,120 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+
+          // Information editor
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Text(
+              'Profile',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              elevation: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        controller: _fullNameController,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Full name',
+                          hintText: 'Your name',
+                        ),
+                        validator: (value) {
+                          final v = (value ?? '').trim();
+                          if (v.isEmpty) return null; // optional
+                          if (v.length > 80) return 'Keep it under 80 characters';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _usernameController,
+                        textInputAction: TextInputAction.done,
+                        autocorrect: false,
+                        decoration: InputDecoration(
+                          labelText: 'Username',
+                          prefixText: '@',
+                          errorText: _usernameErrorText,
+                          suffixIcon: _isCheckingUsername
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                )
+                              : _isUsernameAvailable == true
+                                  ? const Icon(Icons.check_circle, color: Colors.green)
+                                  : _isUsernameAvailable == false
+                                      ? const Icon(Icons.cancel, color: Colors.red)
+                                      : null,
+                          helperText: 'This is what people can search for',
+                        ),
+                        onChanged: (v) {
+                          // Keep UI responsive; check availability in the background.
+                          setState(() {
+                            _usernameErrorText = null;
+                            _isUsernameAvailable = null;
+                          });
+                          _onUsernameChanged(v);
+                        },
+                        validator: (value) {
+                          final v = _normalizedUsernameInput(value ?? '');
+                          if (v.isEmpty) return 'Username is required';
+                          if (v.length < 3) return 'At least 3 characters';
+                          if (v.length > 32) return 'Keep it under 32 characters';
+                          return null;
+                        },
+                        onFieldSubmitted: (_) => _save(),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: user == null || _isSaving
+                                  ? null
+                                  : () {
+                                      FocusScope.of(context).unfocus();
+                                      setState(() {
+                                        _syncFromUser();
+                                      });
+                                    },
+                              child: const Text('Reset'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: _canSave() ? _save : null,
+                              child: _isSaving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Text('Save'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           // Theme section
           ListTile(
             leading: const Icon(Icons.palette_outlined),
