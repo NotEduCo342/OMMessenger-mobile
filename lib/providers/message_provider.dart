@@ -349,13 +349,12 @@ class MessageProvider with ChangeNotifier {
                     createdAt: dbMsg.createdAt,
                   ))
               .toList();
-          // Sort by message ID ascending (oldest first)
-          msgs.sort((a, b) => a.id.compareTo(b.id));
+          // DB returns ascending order (oldest first) - keep as-is
           _messagesByUser[userId] = msgs;
           
-          // Set initial cursor to oldest message ID
+          // Set initial cursor to newest message ID for pagination
           if (msgs.isNotEmpty) {
-            _messageCursors[userId] = msgs.first.id;
+            _messageCursors[userId] = msgs.last.id;
           }
           
           notifyListeners();
@@ -402,14 +401,14 @@ class MessageProvider with ChangeNotifier {
         }
 
         if (loadMore) {
-          // Append to existing messages, avoid duplicates by ID
+          // Append older messages (backend returns newest first, so prepend)
           final existingIds = _messagesByUser[userId]!.map((m) => m.id).toSet();
           final newMessages = messages.where((m) => !existingIds.contains(m.id)).toList();
-          _messagesByUser[userId]!.addAll(newMessages);
-          // Re-sort by ID ascending after adding new messages
-          _messagesByUser[userId]!.sort((a, b) => a.id.compareTo(b.id));
+          // Reverse to get oldest first, then prepend
+          newMessages.sort((a, b) => a.id.compareTo(b.id));
+          _messagesByUser[userId]!.insertAll(0, newMessages);
         } else {
-          // Replace all messages and sort by ID ascending
+          // Backend returns newest first, reverse to oldest first
           messages.sort((a, b) => a.id.compareTo(b.id));
           _messagesByUser[userId] = messages;
           _updateConversation(userId, messages);
@@ -652,13 +651,12 @@ class MessageProvider with ChangeNotifier {
       updatedAt: message.createdAt,
     ));
 
-    // Add to message list and maintain ID-based ordering (ascending)
+    // Add to message list maintaining ascending order (oldest first)
     final list = _messagesByUser.putIfAbsent(otherUserId, () => []);
-    // Remove duplicate if exists (by client_id or id)
+    // Remove duplicate if exists
     list.removeWhere((m) => m.id == message.id || (m.clientId != null && m.clientId == message.clientId));
+    // Append at end (new messages have higher IDs)
     list.add(message);
-    // Sort by message ID ascending (Telegram approach)
-    list.sort((a, b) => a.id.compareTo(b.id));
     _updateConversationWithMessage(otherUserId, message);
     notifyListeners();
 

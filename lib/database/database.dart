@@ -43,7 +43,7 @@ class AppDatabase extends _$AppDatabase {
           ..where((m) =>
               (m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
               (m.senderId.equals(userId) & m.isSentByMe.equals(false)))
-          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
+          ..orderBy([(m) => OrderingTerm.asc(m.serverId), (m) => OrderingTerm.asc(m.id)])
           ..limit(limit))
         .get();
   }
@@ -59,7 +59,7 @@ class AppDatabase extends _$AppDatabase {
               ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
                   (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
               m.id.isSmallerThanValue(cursorId))
-          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
+          ..orderBy([(m) => OrderingTerm.asc(m.serverId), (m) => OrderingTerm.asc(m.id)])
           ..limit(limit))
         .get();
   }
