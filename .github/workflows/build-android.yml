@@ -148,6 +148,10 @@ jobs:
           
           cd build/app/outputs/flutter-apk/
           
+          echo "📋 Original APK files:"
+          ls -la *.apk || echo "No APK files found!"
+          echo ""
+          
           # Release APKs
           if [ -f "app-release.apk" ]; then
             mv app-release.apk OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}.apk
@@ -203,8 +207,20 @@ jobs:
           done
           cat checksums.txt
       
+      - name: Verify APKs exist before upload
+        id: verify_apks
+        run: |
+          if [ -d "build/app/outputs/flutter-apk" ] && ls build/app/outputs/flutter-apk/OMMessenger-*.apk 1> /dev/null 2>&1; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "✅ APK files found and ready for upload"
+            ls -lh build/app/outputs/flutter-apk/OMMessenger-*.apk
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "❌ No APK files found for upload"
+          fi
+      
       - name: Upload APK artifacts
-        if: success()
+        if: success() && steps.verify_apks.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: OMMessenger-APKs-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
