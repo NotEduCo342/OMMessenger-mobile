@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/constants.dart';
 
@@ -63,8 +64,44 @@ class WebSocketService {
         cancelOnError: false,
       );
     } catch (e) {
+      // Token may have expired; attempt a refresh once before scheduling reconnect.
+      final refreshed = await _tryRefreshTokens();
       _updateStatus(ConnectionStatus.disconnected);
-      _scheduleReconnect();
+      if (refreshed) {
+        _scheduleReconnect();
+      } else {
+        _scheduleReconnect();
+      }
+    }
+  }
+
+  Future<bool> _tryRefreshTokens() async {
+    try {
+      final refreshToken = await _storage.read(key: 'refresh_token');
+      if (refreshToken == null) return false;
+
+      final response = await http.post(
+        Uri.parse('${AppConstants.baseUrl}/auth/refresh'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'om_refresh=$refreshToken',
+        },
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) return false;
+
+      final data = jsonDecode(response.body);
+      final access = data['access_token'] as String?;
+      final refresh = data['refresh_token'] as String?;
+      if (access != null && access.isNotEmpty) {
+        await _storage.write(key: 'access_token', value: access);
+      }
+      if (refresh != null && refresh.isNotEmpty) {
+        await _storage.write(key: 'refresh_token', value: refresh);
+      }
+      return access != null;
+    } catch (_) {
+      return false;
     }
   }
 

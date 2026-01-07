@@ -59,14 +59,37 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  Future<void>? _restoreFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreFuture = Future.microtask(() => context.read<AuthProvider>().restoreSession());
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
-        return auth.isAuthenticated ? const HomeScreen() : const LoginScreen();
+        return FutureBuilder<void>(
+          future: _restoreFuture,
+          builder: (context, snapshot) {
+            if (auth.isRestoring) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return auth.isAuthenticated ? const HomeScreen() : const LoginScreen();
+          },
+        );
       },
     );
   }

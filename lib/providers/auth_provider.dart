@@ -9,10 +9,47 @@ class AuthProvider with ChangeNotifier {
   
   User? _user;
   bool _isLoading = false;
+  bool _isRestoring = false;
+  bool _didRestoreAttempt = false;
 
   User? get user => _user;
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _user != null;
+  bool get isRestoring => _isRestoring;
+
+  /// Attempt to restore an existing session (app restart).
+  /// Safe to call multiple times; it will only run once.
+  Future<void> restoreSession() async {
+    if (_didRestoreAttempt) return;
+    _didRestoreAttempt = true;
+
+    _isRestoring = true;
+    // Avoid notifying synchronously during widget build.
+    Future.microtask(notifyListeners);
+
+    try {
+      final accessToken = await _storage.read(key: 'access_token');
+      final refreshToken = await _storage.read(key: 'refresh_token');
+      if (accessToken == null || refreshToken == null) {
+        _user = null;
+        return;
+      }
+
+      // Fetch current user; ApiService will refresh tokens on 401.
+      final me = await _apiService.get('/users/me');
+      if (me is Map && me['user'] != null) {
+        _user = User.fromJson(Map<String, dynamic>.from(me['user']));
+      } else {
+        _user = null;
+      }
+    } catch (_) {
+      // If restoration fails, keep user logged out.
+      _user = null;
+    } finally {
+      _isRestoring = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> login(String email, String password) async {
     _isLoading = true;

@@ -357,7 +357,7 @@ class MessageProvider with ChangeNotifier {
 
   void _handleError(Map<String, dynamic> data) {
     final code = data['code'] as String?;
-    final message = data['message'] as String?;
+    final message = (data['error'] as String?) ?? (data['message'] as String?);
     final details = data['details'] as String?;
     print('⚠️ Server error: $code - $message ${details != null ? '($details)' : ''}');
   }
