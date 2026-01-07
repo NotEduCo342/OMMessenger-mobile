@@ -17,8 +17,8 @@ A modern Flutter messaging application with offline-first capabilities, real-tim
 
 ## 📋 Prerequisites
 
-- Flutter 3.10.4 or higher
-- Dart SDK 3.10.4 or higher
+- Flutter 3.24.5 or higher
+- Dart SDK 3.5.0 or higher
 - Android Studio / VS Code with Flutter extensions
 - Java 17 (for Android builds)
 
