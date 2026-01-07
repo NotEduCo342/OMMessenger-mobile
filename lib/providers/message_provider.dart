@@ -43,6 +43,8 @@ class MessageProvider with ChangeNotifier {
 
   ConnectionStatus get connectionStatus => _wsService.status;
   Stream<ConnectionStatus> get connectionStream => _wsService.statusStream;
+  int? get pingMs => _wsService.pingMs;
+  Stream<int?> get pingMsStream => _wsService.pingMsStream;
   bool get isOnline => _isOnline;
   int get pendingQueueCount => _pendingQueueCount;
   int? get currentUserId => _currentUser?.id;
@@ -74,6 +76,24 @@ class MessageProvider with ChangeNotifier {
   }
 
   bool isTyping(int userId) => _typingUsers[userId] ?? false;
+
+  Future<void> handleAppResumed() async {
+    // When the app resumes after screen-off/background, timers/reconnects may
+    // have been paused. Force a reconnect attempt and refresh connectivity.
+    try {
+      _connectivityService.refresh();
+      _isOnline = _connectivityService.isOnline;
+
+      if (_isOnline) {
+        await _wsService.connect();
+        _wsService.requestPing();
+      }
+    } catch (_) {
+      // Best-effort.
+    } finally {
+      notifyListeners();
+    }
+  }
 
   Future<void> upsertConversationPeer(User otherUser) async {
     final existing = _conversations[otherUser.id];

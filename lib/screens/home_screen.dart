@@ -13,6 +13,19 @@ import 'chat_screen.dart';
 import 'settings_screen.dart';
 import 'user_search_screen.dart';
 
+class _HomeLifecycleObserver with WidgetsBindingObserver {
+  final VoidCallback onResumed;
+
+  _HomeLifecycleObserver({required this.onResumed});
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      onResumed();
+    }
+  }
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -21,6 +34,22 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    WidgetsBinding.instance.addObserver(_lifecycleObserver);
+  }
+
+  late final _HomeLifecycleObserver _lifecycleObserver = _HomeLifecycleObserver(
+    onResumed: () {
+      if (!mounted) return;
+      final user = context.read<AuthProvider>().user;
+      if (user != null) {
+        context.read<MessageProvider>().handleAppResumed();
+      }
+    },
+  );
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +64,12 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_lifecycleObserver);
+    super.dispose();
   }
 
   Future<void> _checkForUpdates() async {
@@ -90,20 +125,46 @@ class _HomeScreenState extends State<HomeScreen> {
               final status = snapshot.data ?? ConnectionStatus.disconnected;
               return Padding(
                 padding: const EdgeInsets.only(right: 8.0),
-                child: Center(
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: status == ConnectionStatus.connected
-                          ? Colors.green
-                          : status == ConnectionStatus.connecting ||
-                                  status == ConnectionStatus.reconnecting
-                              ? Colors.orange
-                              : Colors.red,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        // Manual ping refresh
+                        context.read<MessageProvider>().handleAppResumed();
+                      },
+                      child: StreamBuilder<int?>(
+                        stream: messageProvider.pingMsStream,
+                        initialData: messageProvider.pingMs,
+                        builder: (context, pingSnapshot) {
+                          final ping = pingSnapshot.data;
+                          final text = (status == ConnectionStatus.connected && ping != null)
+                              ? '${ping}ms'
+                              : '--';
+                          return Text(
+                            text,
+                            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: status == ConnectionStatus.connected
+                            ? Colors.green
+                            : status == ConnectionStatus.connecting ||
+                                    status == ConnectionStatus.reconnecting
+                                ? Colors.orange
+                                : Colors.red,
+                      ),
+                    ),
+                  ],
                 ),
               );
             },

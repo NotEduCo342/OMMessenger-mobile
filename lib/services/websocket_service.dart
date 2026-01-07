@@ -18,6 +18,7 @@ class WebSocketService {
   final _storage = const FlutterSecureStorage();
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
+  final _pingMsController = StreamController<int?>.broadcast();
   
   Timer? _pingTimer;
   Timer? _reconnectTimer;
@@ -25,10 +26,15 @@ class WebSocketService {
   int _reconnectAttempts = 0;
   final int _maxReconnectAttempts = 5;
   static const int _compressionThreshold = 512; // Compress messages > 512 bytes
+
+  DateTime? _lastPingSentAt;
+  int? _lastPingMs;
   
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   ConnectionStatus get status => _status;
+  Stream<int?> get pingMsStream => _pingMsController.stream;
+  int? get pingMs => _lastPingMs;
 
   Future<void> connect() async {
     if (_status == ConnectionStatus.connected || _status == ConnectionStatus.connecting) {
@@ -118,7 +124,19 @@ class WebSocketService {
       }
       
       final message = jsonDecode(jsonString);
-      _messageController.add(message as Map<String, dynamic>);
+      final map = message as Map<String, dynamic>;
+
+      // Track ping RTT from pong responses.
+      if (map['type'] == 'pong') {
+        final sentAt = _lastPingSentAt;
+        if (sentAt != null) {
+          final ms = DateTime.now().difference(sentAt).inMilliseconds;
+          _lastPingMs = ms;
+          _pingMsController.add(ms);
+        }
+      }
+
+      _messageController.add(map);
     } catch (e) {
       print('Error parsing message: $e');
     }
@@ -156,11 +174,15 @@ class WebSocketService {
 
   void _startPingTimer() {
     _pingTimer?.cancel();
-    _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_status == ConnectionStatus.connected) {
-        send({'type': 'ping'});
-      }
+    _pingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      requestPing();
     });
+  }
+
+  void requestPing() {
+    if (_status != ConnectionStatus.connected) return;
+    _lastPingSentAt = DateTime.now();
+    send({'type': 'ping'});
   }
 
   void send(Map<String, dynamic> message) {
@@ -254,5 +276,6 @@ class WebSocketService {
     disconnect();
     _messageController.close();
     _statusController.close();
+    _pingMsController.close();
   }
 }
