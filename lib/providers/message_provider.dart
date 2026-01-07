@@ -27,6 +27,7 @@ class MessageProvider with ChangeNotifier {
   final Map<int, bool> _typingUsers = {};
   final Map<int, int?> _messageCursors = {}; // Track pagination cursor per user
   final Map<int, bool> _hasMoreMessages = {}; // Track if more messages exist
+  final Set<int> _userFetchInFlight = {};
 
   bool _isInitialized = false;
   User? _currentUser;
@@ -51,7 +52,52 @@ class MessageProvider with ChangeNotifier {
     return _messagesByUser[userId] ?? [];
   }
 
+  bool _isPlaceholderUser(User user) {
+    return user.username.startsWith('User ') || user.fullName.startsWith('User ');
+  }
+
+  Future<void> _ensurePeerProfile(int userId) async {
+    if (_userFetchInFlight.contains(userId)) return;
+    _userFetchInFlight.add(userId);
+
+    try {
+      final response = await _apiService.get('/users/$userId');
+      if (response is Map && response['user'] != null) {
+        final fetched = User.fromJson(Map<String, dynamic>.from(response['user']));
+        await upsertConversationPeer(fetched);
+      }
+    } catch (_) {
+      // Best-effort: don't spam UI or fail message flow.
+    } finally {
+      _userFetchInFlight.remove(userId);
+    }
+  }
+
   bool isTyping(int userId) => _typingUsers[userId] ?? false;
+
+  Future<void> upsertConversationPeer(User otherUser) async {
+    final existing = _conversations[otherUser.id];
+    final updated = Conversation(
+      otherUser: otherUser,
+      lastMessage: existing?.lastMessage,
+      unreadCount: existing?.unreadCount ?? 0,
+      lastActivity: existing?.lastActivity,
+    );
+    _conversations[otherUser.id] = updated;
+
+    await _database.upsertConversation(ConversationsCompanion.insert(
+      otherUserId: otherUser.id,
+      otherUsername: otherUser.username,
+      otherFullName: otherUser.fullName,
+      otherAvatar: Value(otherUser.avatar),
+      otherIsOnline: Value(otherUser.isOnline),
+      lastMessageContent: Value(existing?.lastMessage?.content),
+      lastMessageTime: Value(existing?.lastMessage?.createdAt),
+      updatedAt: DateTime.now(),
+    ));
+
+    notifyListeners();
+  }
 
   Future<void> initialize(User currentUser) async {
     if (_isInitialized) return;
@@ -253,6 +299,21 @@ class MessageProvider with ChangeNotifier {
           // Replace all messages
           _messagesByUser[userId] = messages;
           _updateConversation(userId, messages);
+
+          // If we still only have placeholder peer data, try to hydrate from message senders.
+          final conv = _conversations[userId];
+          if (conv != null && _isPlaceholderUser(conv.otherUser)) {
+            final peerMsg = messages.cast<Message?>().firstWhere(
+                  (m) => m != null && m.senderId == userId && m.sender != null,
+                  orElse: () => null,
+                );
+            final peer = peerMsg?.sender;
+            if (peer != null) {
+              await upsertConversationPeer(peer);
+            } else {
+              await _ensurePeerProfile(userId);
+            }
+          }
         }
       } else if (!loadMore) {
         // No messages from API but might have local ones
@@ -437,6 +498,14 @@ class MessageProvider with ChangeNotifier {
 
     final message = Message.fromJson(messageData);
     final otherUserId = message.senderId;
+
+    // Persist peer profile ASAP to avoid placeholders.
+    if (message.sender != null) {
+      await upsertConversationPeer(message.sender!);
+    } else {
+      // If sender profile isn't included, hydrate via API.
+      await _ensurePeerProfile(otherUserId);
+    }
 
     // Save to database
     await _database.insertMessage(MessagesCompanion.insert(

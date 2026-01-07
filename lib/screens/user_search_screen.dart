@@ -58,6 +58,8 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
   }
 
   void _openChat(User user) {
+    // Persist peer profile so we don't fall back to placeholders.
+    context.read<MessageProvider>().upsertConversationPeer(user);
     // Initialize message loading for this user
     context.read<MessageProvider>().loadMessages(user.id);
     

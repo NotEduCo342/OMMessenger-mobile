@@ -27,6 +27,7 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<MessageProvider>().upsertConversationPeer(widget.user);
       context.read<MessageProvider>().loadMessages(widget.user.id);
     });
   }
