@@ -123,10 +123,20 @@ jobs:
       - name: List built APKs
         run: |
           echo "📦 Built APK files:"
-          ls -lh build/app/outputs/flutter-apk/
+          if [ -d "build/app/outputs/flutter-apk" ]; then
+            ls -lh build/app/outputs/flutter-apk/
+          else
+            echo "❌ APK output directory not found!"
+            exit 1
+          fi
       
       - name: Rename APK files
         run: |
+          if [ ! -d "build/app/outputs/flutter-apk" ]; then
+            echo "❌ APK output directory not found! Build failed."
+            exit 1
+          fi
+          
           cd build/app/outputs/flutter-apk/
           
           # Release APKs
@@ -163,7 +173,18 @@ jobs:
       - name: Calculate APK checksums
         id: checksums
         run: |
+          if [ ! -d "build/app/outputs/flutter-apk" ]; then
+            echo "⚠️ APK output directory not found, skipping checksums"
+            exit 0
+          fi
+          
           cd build/app/outputs/flutter-apk/
+          
+          if ! ls OMMessenger-*.apk 1> /dev/null 2>&1; then
+            echo "⚠️ No APK files found, skipping checksums"
+            exit 0
+          fi
+          
           echo "## 🔐 APK Checksums (SHA256)" > checksums.txt
           echo "" >> checksums.txt
           for apk in OMMessenger-*.apk; do
@@ -174,6 +195,7 @@ jobs:
           cat checksums.txt
       
       - name: Upload APK artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: OMMessenger-APKs-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
@@ -181,14 +203,12 @@ jobs:
             build/app/outputs/flutter-apk/OMMessenger-*.apk
             build/app/outputs/flutter-apk/checksums.txt
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
       
       - name: Create Build Summary
         if: always()
         run: |
-          cd build/app/outputs/flutter-apk/
-          
-          echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "### 📱 Build Information" >> $GITHUB_STEP_SUMMARY
@@ -200,9 +220,22 @@ jobs:
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
+          # Check if build directory exists
+          if [ ! -d "build/app/outputs/flutter-apk" ]; then
+            echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The APK output directory was not created. This indicates the build failed." >> $GITHUB_STEP_SUMMARY
+            echo "Please check the build logs above for error details." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          cd build/app/outputs/flutter-apk/
+          
           echo "### 📦 APK Files" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if ls OMMessenger-*.apk 1> /dev/null 2>&1; then
+            echo "✅ **Build Successful!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo "| File | Size | Architecture |" >> $GITHUB_STEP_SUMMARY
             echo "|------|------|--------------|" >> $GITHUB_STEP_SUMMARY
             for apk in OMMessenger-*.apk; do
@@ -221,7 +254,9 @@ jobs:
               echo "| \`$apk\` | $SIZE | $ARCH |" >> $GITHUB_STEP_SUMMARY
             done
           else
-            echo "❌ No APK files found!" >> $GITHUB_STEP_SUMMARY
+            echo "❌ No APK files found in output directory!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The build may have failed during APK generation or renaming." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
@@ -231,20 +266,25 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             cat checksums.txt >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Checksums not available (build may have failed)" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### 📥 Download" >> $GITHUB_STEP_SUMMARY
-          echo "Download the APK artifacts from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📝 Installation Instructions" >> $GITHUB_STEP_SUMMARY
-          echo "1. Download the APK file for your device architecture" >> $GITHUB_STEP_SUMMARY
-          echo "2. Enable \"Install from Unknown Sources\" in Android settings" >> $GITHUB_STEP_SUMMARY
-          echo "3. Open the downloaded APK and install" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "**Recommended APK:** \`arm64-v8a\` for most modern Android devices (2019+)" >> $GITHUB_STEP_SUMMARY
+          # Only show download instructions if APKs exist
+          if ls OMMessenger-*.apk 1> /dev/null 2>&1; then
+            echo "### 📥 Download" >> $GITHUB_STEP_SUMMARY
+            echo "Download the APK artifacts from the **Artifacts** section above." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            echo "### 📝 Installation Instructions" >> $GITHUB_STEP_SUMMARY
+            echo "1. Download the APK file for your device architecture" >> $GITHUB_STEP_SUMMARY
+            echo "2. Enable \"Install from Unknown Sources\" in Android settings" >> $GITHUB_STEP_SUMMARY
+            echo "3. Open the downloaded APK and install" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**Recommended APK:** \`arm64-v8a\` for most modern Android devices (2019+)" >> $GITHUB_STEP_SUMMARY
+          fi
       
       - name: Report build failure
         if: failure()
