@@ -25,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _didInitControllers = false;
   bool _isSaving = false;
   bool _isUploadingAvatar = false;
+  bool _isDeletingAvatar = false;
 
   // Debounce to avoid spamming the server while typing.
   // (No timers/animations beyond this simple UX.)
@@ -213,6 +214,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _confirmAndDeleteAvatar() async {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return;
+    if (_isDeletingAvatar || _isUploadingAvatar) return;
+    if (user.avatar.trim().isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove photo'),
+        content: const Text('Remove your profile photo?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    if (!mounted) return;
+    setState(() {
+      _isDeletingAvatar = true;
+    });
+
+    try {
+      await auth.deleteAvatar();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Avatar removed')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Remove failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingAvatar = false;
+        });
+      }
+    }
+  }
+
   Widget _buildProfileAvatar(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
     final radius = 50.0;
@@ -320,6 +372,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
+                if ((user?.avatar ?? '').trim().isNotEmpty)
+                  TextButton(
+                    onPressed: user == null || _isUploadingAvatar || _isDeletingAvatar
+                        ? null
+                        : _confirmAndDeleteAvatar,
+                    child: _isDeletingAvatar
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Remove photo'),
+                  ),
                 Text(
                   user?.fullName ?? user?.username ?? 'Unknown',
                   style: const TextStyle(

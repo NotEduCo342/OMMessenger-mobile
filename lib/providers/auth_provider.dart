@@ -252,6 +252,25 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  Future<User?> deleteAvatar() async {
+    if (_user == null) return null;
+
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await _apiService.delete('/users/me/avatar');
+      if (response is Map && response['user'] != null) {
+        _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        await _saveCachedMe(_user!, etag: null);
+        return _user;
+      }
+      throw Exception('Invalid response from server');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     await _storage.deleteAll();
     try {
