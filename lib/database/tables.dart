@@ -36,8 +36,7 @@ class PendingMessages extends Table {
 
 // Conversations - cached conversation metadata
 class Conversations extends Table {
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get otherUserId => integer().unique()();
+  IntColumn get otherUserId => integer()();
   TextColumn get otherUsername => text()();
   TextColumn get otherFullName => text()();
   TextColumn get otherAvatar => text().withDefault(const Constant(''))();
@@ -46,6 +45,9 @@ class Conversations extends Table {
   DateTimeColumn get lastMessageTime => dateTime().nullable()();
   IntColumn get unreadCount => integer().withDefault(const Constant(0))();
   DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {otherUserId};
 }
 
 // Sync state - track last synced message IDs per user

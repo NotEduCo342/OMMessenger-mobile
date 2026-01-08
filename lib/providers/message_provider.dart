@@ -106,7 +106,7 @@ class MessageProvider with ChangeNotifier {
     _conversations[otherUser.id] = updated;
 
     await _database.upsertConversation(ConversationsCompanion.insert(
-      otherUserId: otherUser.id,
+      otherUserId: Value(otherUser.id),
       otherUsername: otherUser.username,
       otherFullName: otherUser.fullName,
       otherAvatar: Value(otherUser.avatar),
@@ -151,14 +151,20 @@ class MessageProvider with ChangeNotifier {
       notifyListeners();
     });
 
-    // Connect WebSocket
-    await _wsService.connect();
+    // Load conversations from database first so UI isn't empty while we connect.
+    await _loadConversations();
 
     // Listen to WebSocket messages
     _wsService.messageStream.listen(_handleWebSocketMessage);
 
-    // Load conversations from database
-    await _loadConversations();
+    // Connect WebSocket (don't block initial UI)
+    Future.microtask(() async {
+      try {
+        await _wsService.connect();
+      } catch (_) {
+        // best-effort
+      }
+    });
 
     // Best-effort: refresh conversations from server.
     // This repopulates the local DB after reinstall/uninstall.
@@ -290,7 +296,7 @@ class MessageProvider with ChangeNotifier {
         );
 
         await _database.upsertConversation(ConversationsCompanion.insert(
-          otherUserId: peer.id,
+          otherUserId: Value(peer.id),
           otherUsername: peer.username,
           otherFullName: peer.fullName,
           otherAvatar: Value(peer.avatar),
@@ -480,6 +486,27 @@ class MessageProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error loading messages: $e');
+    }
+  }
+
+  /// Called when a conversation screen is opened.
+  /// Clears unread count locally immediately and asks the server to mark the DM as read.
+  Future<void> openConversation(int userId) async {
+    // Local: clear unread count for snappy UI.
+    final existing = _conversations[userId];
+    if (existing != null && existing.unreadCount != 0) {
+      _conversations[userId] = existing.copyWith(unreadCount: 0);
+      await _database.clearUnreadCount(userId);
+      notifyListeners();
+    }
+
+    // Server: mark all messages from this peer to me as read.
+    // Best-effort; if it fails we'll still have local UI cleared, but on next
+    // login the server will re-send unread_count unless this succeeds.
+    try {
+      await _apiService.post('/conversations/$userId/read', {});
+    } catch (_) {
+      // best-effort
     }
   }
 
@@ -704,7 +731,7 @@ class MessageProvider with ChangeNotifier {
 
     // Update conversation in database
     await _database.upsertConversation(ConversationsCompanion.insert(
-      otherUserId: otherUserId,
+      otherUserId: Value(otherUserId),
       otherUsername: message.sender?.username ?? 'User $otherUserId',
       otherFullName: message.sender?.fullName ?? 'User $otherUserId',
       otherAvatar: const Value(''),
@@ -837,7 +864,7 @@ class MessageProvider with ChangeNotifier {
     
     // Persist to database
     await _database.upsertConversation(ConversationsCompanion.insert(
-      otherUserId: userId,
+      otherUserId: Value(userId),
       otherUsername: conversation.otherUser.username,
       otherFullName: conversation.otherUser.fullName,
       otherAvatar: Value(conversation.otherUser.avatar),

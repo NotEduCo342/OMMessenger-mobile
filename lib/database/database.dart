@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -29,6 +29,12 @@ class AppDatabase extends _$AppDatabase {
             'UPDATE messages SET created_at_unix = created_at / 1000 '
             'WHERE created_at_unix IS NULL AND created_at IS NOT NULL;',
           );
+        }
+
+        if (from < 3) {
+          // Conversations is a cache table; schema changed to use otherUserId as PK.
+          await customStatement('DROP TABLE IF EXISTS conversations;');
+          await m.createTable(conversations);
         }
       },
     );

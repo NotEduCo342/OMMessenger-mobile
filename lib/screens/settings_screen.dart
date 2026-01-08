@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
+import '../widgets/user_avatar.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -269,51 +269,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final user = context.watch<AuthProvider>().user;
     final radius = 50.0;
 
-    if (user == null || user.avatar.trim().isEmpty) {
-      return CircleAvatar(
-        radius: radius,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        child: Text(
-          user?.username.isNotEmpty == true
-              ? user!.username[0].toUpperCase()
-              : '?',
-          style: const TextStyle(
-            fontSize: 40,
-            color: Colors.white,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      );
-    }
-
-    return CachedNetworkImage(
-      imageUrl: user.avatar,
-      imageBuilder: (context, imageProvider) => CircleAvatar(
-        radius: radius,
-        backgroundImage: imageProvider,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-      placeholder: (context, url) => CircleAvatar(
-        radius: radius,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        child: const SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-        ),
-      ),
-      errorWidget: (context, url, error) => CircleAvatar(
-        radius: radius,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        child: Text(
-          user.username.isNotEmpty ? user.username[0].toUpperCase() : '?',
-          style: const TextStyle(
-            fontSize: 40,
-            color: Colors.white,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
+    return UserAvatar(
+      username: user?.username ?? '',
+      avatarUrl: user?.avatar ?? '',
+      radius: radius,
     );
   }
 

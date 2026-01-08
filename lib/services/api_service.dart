@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/constants.dart';
 
@@ -7,8 +8,24 @@ class ApiService {
   final _storage = const FlutterSecureStorage();
   bool _isRefreshing = false;
 
+  void _dlog(String message) {
+    if (!kDebugMode) return;
+    debugPrint('[ApiService] $message');
+  }
+
+  String _truncate(String s, {int max = 300}) {
+    if (s.length <= max) return s;
+    return '${s.substring(0, max)}…(${s.length} chars)';
+  }
+
+  String _maskToken(String? token) {
+    if (token == null || token.isEmpty) return 'none';
+    return 'len=${token.length}';
+  }
+
   Future<Map<String, String>> _getHeaders() async {
     String? token = await _storage.read(key: 'access_token');
+    _dlog('Headers auth=${_maskToken(token)}');
     return {
       'Content-Type': 'application/json',
       if (token != null) 'Authorization': 'Bearer $token',
@@ -17,6 +34,7 @@ class ApiService {
 
   Future<Map<String, String>> _getAuthHeaders() async {
     String? token = await _storage.read(key: 'access_token');
+    _dlog('AuthHeaders auth=${_maskToken(token)}');
     return {
       if (token != null) 'Authorization': 'Bearer $token',
     };
@@ -29,32 +47,44 @@ class ApiService {
 
   Future<dynamic> post(String endpoint, Map<String, dynamic> body) async {
     final headers = await _getHeaders();
+    final url = '${AppConstants.baseUrl}$endpoint';
+    _dlog('POST $url body=${_truncate(jsonEncode(body))}');
     final response = await _makeRequestResponse(() => http.post(
-      Uri.parse('${AppConstants.baseUrl}$endpoint'),
+      Uri.parse(url),
       headers: headers,
       body: jsonEncode(body),
     ));
+
+    _dlog('POST $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
     return _handleResponse(response);
   }
 
   Future<dynamic> put(String endpoint, Map<String, dynamic> body) async {
     final headers = await _getHeaders();
+    final url = '${AppConstants.baseUrl}$endpoint';
+    _dlog('PUT $url body=${_truncate(jsonEncode(body))}');
     final response = await _makeRequestResponse(() => http.put(
-      Uri.parse('${AppConstants.baseUrl}$endpoint'),
+      Uri.parse(url),
       headers: headers,
       body: jsonEncode(body),
     ));
+
+    _dlog('PUT $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
     return _handleResponse(response);
   }
 
   Future<dynamic> delete(String endpoint) async {
     final headers = await _getHeaders();
+    final url = '${AppConstants.baseUrl}$endpoint';
+    _dlog('DELETE $url');
     final response = await _makeRequestResponse(() => http.delete(
-      Uri.parse('${AppConstants.baseUrl}$endpoint'),
+      Uri.parse(url),
       headers: headers,
     ));
+
+    _dlog('DELETE $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
     return _handleResponse(response);
   }
@@ -71,10 +101,19 @@ class ApiService {
       if (extraHeaders != null) ...extraHeaders,
     };
 
-    return _makeRequestResponse(() => http.get(
-          Uri.parse('${AppConstants.baseUrl}$endpoint'),
+    final url = '${AppConstants.baseUrl}$endpoint';
+    if (kDebugMode) {
+      final ifNoneMatch = merged['If-None-Match'];
+      _dlog('GET $url if-none-match=${ifNoneMatch ?? 'none'}');
+    }
+
+    final response = await _makeRequestResponse(() => http.get(
+          Uri.parse(url),
           headers: merged,
         ));
+
+    _dlog('GET $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
+    return response;
   }
 
   /// Upload a single file using multipart/form-data.
@@ -88,6 +127,8 @@ class ApiService {
     String? filename,
   }) async {
     final uri = Uri.parse('${AppConstants.baseUrl}$endpoint');
+
+    _dlog('MULTIPART POST $uri field=$fieldName file=$filePath');
 
     Future<http.Response> sendOnce() async {
       final authHeaders = await _getAuthHeaders();
@@ -105,11 +146,14 @@ class ApiService {
         filename: safeFilename,
       ));
 
+      _dlog('MULTIPART POST $uri filename=$safeFilename authHeader=${authHeaders.containsKey('Authorization')}');
+
       final streamed = await request.send();
       return http.Response.fromStream(streamed);
     }
 
     final response = await _makeRequestResponse(sendOnce);
+    _dlog('MULTIPART POST $uri -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
     return _handleResponse(response);
   }
 
@@ -120,11 +164,14 @@ class ApiService {
 
     // Handle 401 - token expired
     if (response.statusCode == 401 && !_isRefreshing) {
+      _dlog('401 received; attempting token refresh');
       final refreshed = await _refreshToken();
       if (refreshed) {
+        _dlog('token refresh OK; retrying request');
         // Retry original request with new token
         return request();
       } else {
+        _dlog('token refresh FAILED');
         throw Exception('Session expired. Please login again.');
       }
     }
@@ -141,6 +188,8 @@ class ApiService {
     try {
       final refreshToken = await _storage.read(key: 'refresh_token');
       if (refreshToken == null) return false;
+
+      _dlog('refresh token present (len=${refreshToken.length}); POST /auth/refresh');
 
       final response = await http.post(
         Uri.parse('${AppConstants.baseUrl}/auth/refresh'),
@@ -164,9 +213,11 @@ class ApiService {
         return true;
       }
 
+      _dlog('refresh failed: ${response.statusCode} body=${_truncate(response.body)}');
+
       return false;
     } catch (e) {
-      print('Token refresh error: $e');
+      _dlog('Token refresh error: $e');
       return false;
     } finally {
       _isRefreshing = false;

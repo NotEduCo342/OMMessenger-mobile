@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +23,11 @@ class AuthProvider with ChangeNotifier {
   bool get isAuthenticated => _user != null;
   bool get isRestoring => _isRestoring;
 
+  void _dlog(String message) {
+    if (!kDebugMode) return;
+    debugPrint('[AuthProvider] $message');
+  }
+
   Future<User?> _loadCachedMeUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -30,8 +36,8 @@ class AuthProvider with ChangeNotifier {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
       return User.fromJson(Map<String, dynamic>.from(decoded));
-    } catch (_) {
-      return null;
+    } catch (e) {
+      _dlog('Refresh /users/me failed: $e');
     }
   }
 
@@ -60,12 +66,15 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> _refreshMeAndCache() async {
     try {
+      _dlog('Refreshing /users/me (no If-None-Match)');
       final response = await _apiService.getResponse('/users/me');
+      _dlog('Refresh /users/me -> ${response.statusCode} etag=${response.headers['etag'] ?? 'none'}');
       if (response.statusCode >= 200 && response.statusCode < 300) {
         if (response.body.isEmpty) return;
         final decoded = jsonDecode(response.body);
         if (decoded is Map && decoded['user'] != null) {
           _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
+          _dlog('Refreshed user.avatar=${_user?.avatar}');
           await _saveCachedMe(
             _user!,
             etag: response.headers['etag'],
@@ -73,7 +82,8 @@ class AuthProvider with ChangeNotifier {
           notifyListeners();
         }
       }
-    } catch (_) {
+    } catch (e) {
+      _dlog('Refresh /users/me failed: $e');
       // best-effort
     }
   }
@@ -93,9 +103,12 @@ class AuthProvider with ChangeNotifier {
       final accessToken = await _storage.read(key: 'access_token');
       final refreshToken = await _storage.read(key: 'refresh_token');
       if (accessToken == null || refreshToken == null) {
+        _dlog('restoreSession: no tokens; logged out');
         _user = null;
         return;
       }
+
+      _dlog('restoreSession: tokens present; warm-start cached user + ETag');
 
       // Warm-start: load cached profile immediately (best-effort), then
       // revalidate cheaply via ETag.
@@ -107,6 +120,8 @@ class AuthProvider with ChangeNotifier {
 
       final cachedEtag = await _loadCachedMeEtag();
 
+      _dlog('restoreSession: cachedEtag=${cachedEtag ?? 'none'}');
+
       // Fetch current user; ApiService will refresh tokens on 401.
       final response = await _apiService.getResponse(
         '/users/me',
@@ -117,6 +132,7 @@ class AuthProvider with ChangeNotifier {
       );
 
       if (response.statusCode == 304) {
+        _dlog('restoreSession: /users/me 304; keeping cached user.avatar=${_user?.avatar}');
         // Profile unchanged; keep cached user.
         if (_user == null) {
           _user = cachedUser;
@@ -132,6 +148,7 @@ class AuthProvider with ChangeNotifier {
         final decoded = jsonDecode(response.body);
         if (decoded is Map && decoded['user'] != null) {
           _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
+          _dlog('restoreSession: /users/me updated user.avatar=${_user?.avatar}');
           await _saveCachedMe(
             _user!,
             etag: response.headers['etag'],
@@ -252,6 +269,9 @@ class AuthProvider with ChangeNotifier {
   Future<User?> uploadAvatar(String filePath) async {
     if (_user == null) return null;
 
+    final before = _user?.avatar;
+    _dlog('uploadAvatar: start file=$filePath before.avatar=$before');
+
     _isLoading = true;
     notifyListeners();
     try {
@@ -263,8 +283,10 @@ class AuthProvider with ChangeNotifier {
 
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        _dlog('uploadAvatar: server user.avatar=${_user?.avatar}');
         await _saveCachedMe(_user!, etag: null);
         await _refreshMeAndCache();
+        _dlog('uploadAvatar: done afterRefresh.avatar=${_user?.avatar}');
         return _user;
       }
       throw Exception('Invalid response from server');
@@ -277,14 +299,19 @@ class AuthProvider with ChangeNotifier {
   Future<User?> deleteAvatar() async {
     if (_user == null) return null;
 
+    final before = _user?.avatar;
+    _dlog('deleteAvatar: start before.avatar=$before');
+
     _isLoading = true;
     notifyListeners();
     try {
       final response = await _apiService.delete('/users/me/avatar');
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        _dlog('deleteAvatar: server user.avatar=${_user?.avatar}');
         await _saveCachedMe(_user!, etag: null);
         await _refreshMeAndCache();
+        _dlog('deleteAvatar: done afterRefresh.avatar=${_user?.avatar}');
         return _user;
       }
       throw Exception('Invalid response from server');
