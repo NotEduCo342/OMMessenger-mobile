@@ -5,7 +5,7 @@
 A modern Flutter messaging application with offline-first capabilities, real-time sync, and automatic update system.
 
 ## 🚀 Features
-
+60
 - ✨ Real-time messaging via WebSocket
 - 📴 Offline-first architecture with local database
 - 🔄 Automatic background sync when connectivity restored
