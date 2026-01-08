@@ -58,6 +58,26 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  Future<void> _refreshMeAndCache() async {
+    try {
+      final response = await _apiService.getResponse('/users/me');
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (response.body.isEmpty) return;
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['user'] != null) {
+          _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
+          await _saveCachedMe(
+            _user!,
+            etag: response.headers['etag'],
+          );
+          notifyListeners();
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
   /// Attempt to restore an existing session (app restart).
   /// Safe to call multiple times; it will only run once.
   Future<void> restoreSession() async {
@@ -205,6 +225,7 @@ class AuthProvider with ChangeNotifier {
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
         await _saveCachedMe(_user!, etag: null);
+        await _refreshMeAndCache();
         return _user;
       }
       throw Exception('Invalid response from server');
@@ -243,6 +264,7 @@ class AuthProvider with ChangeNotifier {
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
         await _saveCachedMe(_user!, etag: null);
+        await _refreshMeAndCache();
         return _user;
       }
       throw Exception('Invalid response from server');
@@ -262,6 +284,7 @@ class AuthProvider with ChangeNotifier {
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
         await _saveCachedMe(_user!, etag: null);
+        await _refreshMeAndCache();
         return _user;
       }
       throw Exception('Invalid response from server');

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
-import '../services/api_service.dart';
 import '../providers/message_provider.dart';
+import '../services/api_service.dart';
+import '../widgets/user_avatar.dart';
 import 'chat_screen.dart';
 
 class UserSearchScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class UserSearchScreen extends StatefulWidget {
 class _UserSearchScreenState extends State<UserSearchScreen> {
   final _searchController = TextEditingController();
   final _apiService = ApiService();
+
   List<User> _searchResults = [];
   bool _isSearching = false;
   String? _errorMessage;
@@ -30,6 +32,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
       setState(() {
         _searchResults = [];
         _errorMessage = null;
+        _isSearching = false;
       });
       return;
     }
@@ -60,9 +63,9 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
   void _openChat(User user) {
     // Persist peer profile so we don't fall back to placeholders.
     context.read<MessageProvider>().upsertConversationPeer(user);
-    // Initialize message loading for this user
+    // Initialize message loading for this user.
     context.read<MessageProvider>().loadMessages(user.id);
-    
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -110,6 +113,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
                 setState(() {});
                 // Debounce search
                 Future.delayed(const Duration(milliseconds: 500), () {
+                  if (!mounted) return;
                   if (value == _searchController.text) {
                     _searchUsers(value);
                   }
@@ -134,12 +138,9 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
             Text(
               _errorMessage!,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => _searchUsers(_searchController.text),
-              child: const Text('Retry'),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
           ],
         ),
@@ -215,17 +216,10 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
         return ListTile(
           leading: Stack(
             children: [
-              CircleAvatar(
+              UserAvatar(
+                username: user.username,
+                avatarUrl: user.avatar,
                 radius: 24,
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                child: Text(
-                  user.username[0].toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
               ),
               if (user.isOnline)
                 Positioned(

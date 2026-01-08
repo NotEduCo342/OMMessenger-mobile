@@ -8,6 +8,7 @@ import '../models/conversation.dart';
 import '../services/websocket_service.dart';
 import '../services/update_service.dart';
 import '../widgets/offline_banner.dart';
+import '../widgets/user_avatar.dart';
 import '../widgets/update_dialog.dart';
 import 'chat_screen.dart';
 import 'settings_screen.dart';
@@ -274,17 +275,10 @@ class _ConversationTile extends StatelessWidget {
             // Avatar
             Stack(
               children: [
-                CircleAvatar(
+                UserAvatar(
+                  username: conversation.otherUser.username,
+                  avatarUrl: conversation.otherUser.avatar,
                   radius: 28,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  child: Text(
-                    conversation.otherUser.username[0].toUpperCase(),
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
-                    ),
-                  ),
                 ),
                 if (conversation.otherUser.isOnline)
                   Positioned(

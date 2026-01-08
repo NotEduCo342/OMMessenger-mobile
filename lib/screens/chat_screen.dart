@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../models/user.dart';
 import '../models/message.dart';
 import '../providers/message_provider.dart';
+import '../widgets/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
   final User user;
@@ -126,13 +127,10 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Stack(
               children: [
-                CircleAvatar(
+                UserAvatar(
+                  username: widget.user.username,
+                  avatarUrl: widget.user.avatar,
                   radius: 20,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  child: Text(
-                    widget.user.username[0].toUpperCase(),
-                    style: TextStyle(color: Theme.of(context).colorScheme.onPrimary),
-                  ),
                 ),
                 if (widget.user.isOnline)
                   Positioned(
