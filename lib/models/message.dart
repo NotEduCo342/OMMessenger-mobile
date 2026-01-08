@@ -12,7 +12,10 @@ class Message {
   final String status;
   final bool isDelivered;
   final bool isRead;
+  // Canonical message time (UTC). Use createdAtLocal for display.
   final DateTime createdAt;
+  // Canonical message time in UTC seconds since epoch.
+  final int createdAtUnix;
 
   Message({
     required this.id,
@@ -27,9 +30,29 @@ class Message {
     required this.isDelivered,
     required this.isRead,
     required this.createdAt,
+    required this.createdAtUnix,
   });
 
+  DateTime get createdAtLocal => createdAt.toLocal();
+
   factory Message.fromJson(Map<String, dynamic> json) {
+    final createdAtUnixRaw = json['created_at_unix'];
+    DateTime createdAtUtc;
+    int createdAtUnix;
+
+    if (createdAtUnixRaw is int || createdAtUnixRaw is num) {
+      createdAtUnix = (createdAtUnixRaw as num).toInt();
+      createdAtUtc = DateTime.fromMillisecondsSinceEpoch(
+        createdAtUnix * 1000,
+        isUtc: true,
+      );
+    } else {
+      // Fallback for older servers/rows.
+      final parsed = DateTime.parse(json['created_at']);
+      createdAtUtc = parsed.isUtc ? parsed : parsed.toUtc();
+      createdAtUnix = createdAtUtc.millisecondsSinceEpoch ~/ 1000;
+    }
+
     return Message(
       id: json['id'],
       clientId: json['client_id'] ?? '',
@@ -42,7 +65,8 @@ class Message {
       status: json['status'],
       isDelivered: json['is_delivered'] ?? false,
       isRead: json['is_read'] ?? false,
-      createdAt: DateTime.parse(json['created_at']),
+      createdAt: createdAtUtc,
+      createdAtUnix: createdAtUnix,
     );
   }
 }

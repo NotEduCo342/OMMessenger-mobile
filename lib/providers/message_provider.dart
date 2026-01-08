@@ -190,7 +190,9 @@ class MessageProvider with ChangeNotifier {
             isOnline: convo.otherIsOnline,
           ),
           lastMessage: convo.lastMessageContent != null
-              ? Message(
+              ? (() {
+                  final createdAtUtc = (convo.lastMessageTime ?? DateTime.now()).toUtc();
+                  return Message(
                   id: 0,
                   clientId: '',
                   senderId: convo.otherUserId,
@@ -202,8 +204,10 @@ class MessageProvider with ChangeNotifier {
                   status: 'delivered',
                   isDelivered: true,
                   isRead: true,
-                  createdAt: convo.lastMessageTime ?? DateTime.now(),
-                )
+                  createdAt: createdAtUtc,
+                  createdAtUnix: createdAtUtc.millisecondsSinceEpoch ~/ 1000,
+                );
+                })()
               : null,
           unreadCount: convo.unreadCount,
           lastActivity: convo.lastMessageTime,
@@ -346,16 +350,29 @@ class MessageProvider with ChangeNotifier {
                     status: dbMsg.status,
                     isDelivered: dbMsg.isDelivered,
                     isRead: dbMsg.isRead,
-                    createdAt: dbMsg.createdAt,
+                    createdAt: (dbMsg.createdAtUnix != null)
+                        ? DateTime.fromMillisecondsSinceEpoch(
+                            dbMsg.createdAtUnix! * 1000,
+                            isUtc: true,
+                          )
+                        : (dbMsg.createdAt.isUtc ? dbMsg.createdAt : dbMsg.createdAt.toUtc()),
+                    createdAtUnix: dbMsg.createdAtUnix ??
+                        (dbMsg.createdAt.isUtc
+                            ? (dbMsg.createdAt.millisecondsSinceEpoch ~/ 1000)
+                            : (dbMsg.createdAt.toUtc().millisecondsSinceEpoch ~/ 1000)),
                   ))
               .toList();
-          // DB returns ascending order (oldest first) - keep as-is
+          // ChatScreen uses ListView(reverse:true). For that, our in-memory list
+          // must be newest-first so the newest message (index 0) renders at bottom.
+          _sortConversationMessages(msgs);
           _messagesByUser[userId] = msgs;
-          
-          // Set initial cursor to newest message ID for pagination
-          if (msgs.isNotEmpty) {
-            _messageCursors[userId] = msgs.last.id;
-          }
+
+          // Cursor should point to the oldest server-backed message we have loaded.
+          final oldestServerBacked = msgs.lastWhere(
+            (m) => m.id > 0,
+            orElse: () => msgs.last,
+          );
+          _messageCursors[userId] = oldestServerBacked.id > 0 ? oldestServerBacked.id : null;
           
           notifyListeners();
         }
@@ -373,13 +390,18 @@ class MessageProvider with ChangeNotifier {
           .map((json) => Message.fromJson(json))
           .toList();
 
-      // Check if more messages exist
+      // Check if more messages exist (backend returns newest-first)
       final hasMore = messages.length == limit;
       _hasMoreMessages[userId] = hasMore;
 
       if (messages.isNotEmpty) {
-        // Update cursor to last message ID
-        _messageCursors[userId] = messages.last.id;
+        // Backend provides next_cursor (oldest message ID in this page)
+        final nextCursor = response['next_cursor'];
+        if (nextCursor is int && nextCursor > 0) {
+          _messageCursors[userId] = nextCursor;
+        } else {
+          _messageCursors[userId] = messages.last.id;
+        }
 
         // Save to database
         for (final msg in messages) {
@@ -395,23 +417,45 @@ class MessageProvider with ChangeNotifier {
             isDelivered: Value(msg.isDelivered),
             isRead: Value(msg.isRead),
             createdAt: msg.createdAt,
+            createdAtUnix: Value(msg.createdAtUnix),
             updatedAt: msg.createdAt,
             isSentByMe: msg.senderId == _currentUser?.id,
           ));
         }
 
         if (loadMore) {
-          // Append older messages (backend returns newest first, so prepend)
-          final existingIds = _messagesByUser[userId]!.map((m) => m.id).toSet();
+          // Load-more returns older messages. With newest-first ordering, append older
+          // items to the end of the list.
+          final list = _messagesByUser.putIfAbsent(userId, () => []);
+          final existingIds = list.map((m) => m.id).toSet();
           final newMessages = messages.where((m) => !existingIds.contains(m.id)).toList();
-          // Reverse to get oldest first, then prepend
-          newMessages.sort((a, b) => a.id.compareTo(b.id));
-          _messagesByUser[userId]!.insertAll(0, newMessages);
+          list.addAll(newMessages);
+          _sortConversationMessages(list);
         } else {
-          // Backend returns newest first, reverse to oldest first
-          messages.sort((a, b) => a.id.compareTo(b.id));
-          _messagesByUser[userId] = messages;
-          _updateConversation(userId, messages);
+          // Replace with newest-first list from backend, but preserve any pending
+          // optimistic messages already shown.
+          final existing = _messagesByUser[userId] ?? const <Message>[];
+          final pending = existing.where((m) => _isPendingMessage(m)).toList();
+
+          final merged = <Message>[];
+          merged.addAll(pending);
+          merged.addAll(messages);
+          // Deduplicate by id/clientId.
+          final seenIds = <int>{};
+          final seenClientIds = <String>{};
+          final deduped = <Message>[];
+          for (final m in merged) {
+            final cid = m.clientId;
+            if (m.id > 0 && seenIds.contains(m.id)) continue;
+            if (cid != null && cid.isNotEmpty && seenClientIds.contains(cid)) continue;
+            if (m.id > 0) seenIds.add(m.id);
+            if (cid != null && cid.isNotEmpty) seenClientIds.add(cid);
+            deduped.add(m);
+          }
+
+          _sortConversationMessages(deduped);
+          _messagesByUser[userId] = deduped;
+          _updateConversation(userId, deduped);
 
           // If we still only have placeholder peer data, try to hydrate from message senders.
           final conv = _conversations[userId];
@@ -443,7 +487,8 @@ class MessageProvider with ChangeNotifier {
     if (_currentUser == null) return;
 
     final clientId = _uuid.v4();
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
+    final nowUnix = now.millisecondsSinceEpoch ~/ 1000;
 
     // Create optimistic message
     final message = Message(
@@ -459,6 +504,7 @@ class MessageProvider with ChangeNotifier {
       isDelivered: false,
       isRead: false,
       createdAt: now,
+      createdAtUnix: nowUnix,
     );
 
     // Save to database immediately
@@ -470,16 +516,18 @@ class MessageProvider with ChangeNotifier {
       messageType: const Value('text'),
       status: const Value('pending'),
       createdAt: now,
+      createdAtUnix: Value(nowUnix),
       updatedAt: now,
       isSentByMe: true,
     ));
 
-    // Add to message list (maintain ID-based ordering: ascending by ID)
+    // Add to message list (ChatScreen reverse:true expects newest-first)
     final messageList = _messagesByUser.putIfAbsent(recipientId, () => []);
     // Deduplicate by client_id
     messageList.removeWhere((m) => m.clientId == clientId);
-    // Pending messages (id=0) go at the end (will be reordered after ACK)
-    messageList.add(message);
+    // Pending outgoing should appear as the newest message.
+    messageList.insert(0, message);
+    _sortConversationMessages(messageList);
     _pendingMessages[clientId] = message;
 
     // Update conversation
@@ -545,6 +593,10 @@ class MessageProvider with ChangeNotifier {
     final clientId = ackData['client_id'] as String?;
     final serverId = ackData['server_id'] as int?;
     final status = ackData['status'] as String?;
+    final createdAtUnixRaw = ackData['created_at_unix'];
+    final createdAtUnix = (createdAtUnixRaw is int || createdAtUnixRaw is num)
+      ? (createdAtUnixRaw as num).toInt()
+      : null;
 
     if (clientId == null || serverId == null) {
       return;
@@ -552,7 +604,12 @@ class MessageProvider with ChangeNotifier {
 
     // Always update database first
     try {
-      await _database.updateMessageWithServerId(clientId, serverId, status ?? 'sent');
+      await _database.updateMessageWithServerInfo(
+        clientId,
+        serverId,
+        status ?? 'sent',
+        createdAtUnix: createdAtUnix,
+      );
     } catch (e) {
       print('Error updating message in DB: $e');
     }
@@ -568,6 +625,11 @@ class MessageProvider with ChangeNotifier {
     final pendingMessage = _pendingMessages[clientId];
     if (pendingMessage != null) {
 
+      final createdAtUtc = createdAtUnix != null
+          ? DateTime.fromMillisecondsSinceEpoch(createdAtUnix * 1000, isUtc: true)
+          : pendingMessage.createdAt;
+      final finalCreatedAtUnix = createdAtUnix ?? pendingMessage.createdAtUnix;
+
       // Update message with server ID
       final updatedMessage = Message(
         id: serverId,
@@ -581,7 +643,8 @@ class MessageProvider with ChangeNotifier {
         status: status ?? 'sent',
         isDelivered: status == 'delivered',
         isRead: status == 'read',
-        createdAt: pendingMessage.createdAt,
+        createdAt: createdAtUtc,
+        createdAtUnix: finalCreatedAtUnix,
       );
 
       // Replace in message list and re-sort by ID
@@ -591,8 +654,7 @@ class MessageProvider with ChangeNotifier {
         final index = messages.indexWhere((m) => m.clientId == clientId);
         if (index != -1) {
           messages[index] = updatedMessage;
-          // Re-sort by message ID (ascending) to maintain Telegram-style ordering
-          messages.sort((a, b) => a.id.compareTo(b.id));
+          _sortConversationMessages(messages);
         }
       }
 
@@ -635,6 +697,7 @@ class MessageProvider with ChangeNotifier {
       status: const Value('delivered'),
       isDelivered: const Value(true),
       createdAt: message.createdAt,
+      createdAtUnix: Value(message.createdAtUnix),
       updatedAt: message.createdAt,
       isSentByMe: false,
     ));
@@ -651,12 +714,12 @@ class MessageProvider with ChangeNotifier {
       updatedAt: message.createdAt,
     ));
 
-    // Add to message list maintaining ascending order (oldest first)
+    // Add to message list (keep newest-first)
     final list = _messagesByUser.putIfAbsent(otherUserId, () => []);
     // Remove duplicate if exists
     list.removeWhere((m) => m.id == message.id || (m.clientId != null && m.clientId == message.clientId));
-    // Append at end (new messages have higher IDs)
     list.add(message);
+    _sortConversationMessages(list);
     _updateConversationWithMessage(otherUserId, message);
     notifyListeners();
 
@@ -724,6 +787,31 @@ class MessageProvider with ChangeNotifier {
     );
 
     _conversations[userId] = conversation;
+  }
+
+  bool _isPendingMessage(Message m) {
+    return m.status == 'pending' || m.id == 0;
+  }
+
+  void _sortConversationMessages(List<Message> list) {
+    // Newest-first ordering compatible with ListView(reverse:true):
+    // - Pending optimistic messages first (by createdAt desc)
+    // - Then server-backed messages by id desc
+    list.sort((a, b) {
+      final aPending = _isPendingMessage(a);
+      final bPending = _isPendingMessage(b);
+      if (aPending != bPending) return aPending ? -1 : 1;
+
+      if (aPending && bPending) {
+        final byTime = b.createdAt.compareTo(a.createdAt);
+        if (byTime != 0) return byTime;
+        return (b.clientId ?? '').compareTo(a.clientId ?? '');
+      }
+
+      final byId = b.id.compareTo(a.id);
+      if (byId != 0) return byId;
+      return b.createdAt.compareTo(a.createdAt);
+    });
   }
 
   void _updateConversationWithMessage(int userId, Message message) async {

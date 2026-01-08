@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:image_picker/image_picker.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 
@@ -15,11 +17,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _usernameController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
+  final _imagePicker = ImagePicker();
+
   bool _isCheckingUsername = false;
   bool? _isUsernameAvailable;
   String? _usernameErrorText;
   bool _didInitControllers = false;
   bool _isSaving = false;
+  bool _isUploadingAvatar = false;
 
   // Debounce to avoid spamming the server while typing.
   // (No timers/animations beyond this simple UX.)
@@ -170,6 +175,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _pickAndUploadAvatar() async {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return;
+    if (_isUploadingAvatar) return;
+
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        requestFullMetadata: false,
+      );
+      if (picked == null) return;
+
+      if (!mounted) return;
+      setState(() {
+        _isUploadingAvatar = true;
+      });
+
+      await auth.uploadAvatar(picked.path);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Avatar updated')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Avatar upload failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingAvatar = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildProfileAvatar(BuildContext context) {
+    final user = context.watch<AuthProvider>().user;
+    final radius = 50.0;
+
+    if (user == null || user.avatar.trim().isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: Text(
+          user?.username.isNotEmpty == true
+              ? user!.username[0].toUpperCase()
+              : '?',
+          style: const TextStyle(
+            fontSize: 40,
+            color: Colors.white,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+
+    return CachedNetworkImage(
+      imageUrl: user.avatar,
+      imageBuilder: (context, imageProvider) => CircleAvatar(
+        radius: radius,
+        backgroundImage: imageProvider,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+      ),
+      placeholder: (context, url) => CircleAvatar(
+        radius: radius,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: const SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+        ),
+      ),
+      errorWidget: (context, url, error) => CircleAvatar(
+        radius: radius,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        child: Text(
+          user.username.isNotEmpty ? user.username[0].toUpperCase() : '?',
+          style: const TextStyle(
+            fontSize: 40,
+            color: Colors.white,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
@@ -191,17 +286,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
-                CircleAvatar(
-                  radius: 50,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  child: Text(
-                    user?.username[0].toUpperCase() ?? '?',
-                    style: const TextStyle(
-                      fontSize: 40,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
+                Stack(
+                  alignment: Alignment.bottomRight,
+                  children: [
+                    GestureDetector(
+                      onTap: user == null || _isUploadingAvatar
+                          ? null
+                          : _pickAndUploadAvatar,
+                      child: _buildProfileAvatar(context),
                     ),
-                  ),
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Material(
+                        color: Theme.of(context).colorScheme.surface,
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          iconSize: 20,
+                          onPressed: user == null || _isUploadingAvatar
+                              ? null
+                              : _pickAndUploadAvatar,
+                          icon: _isUploadingAvatar
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.photo_camera_outlined),
+                          tooltip: 'Change avatar',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 Text(

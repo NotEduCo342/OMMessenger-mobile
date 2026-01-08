@@ -14,6 +14,8 @@ class Messages extends Table {
   BoolColumn get isDelivered => boolean().withDefault(const Constant(false))();
   BoolColumn get isRead => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime()();
+  // Canonical server timestamp (UTC seconds since epoch). Used to avoid timezone drift.
+  IntColumn get createdAtUnix => integer().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
   BoolColumn get isSentByMe => boolean()();
 }

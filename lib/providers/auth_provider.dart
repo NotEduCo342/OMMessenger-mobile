@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 
 class AuthProvider with ChangeNotifier {
   final ApiService _apiService = ApiService();
   final _storage = const FlutterSecureStorage();
+
+  static const _meUserCacheKey = 'cache_me_user_json';
+  static const _meUserEtagKey = 'cache_me_etag';
   
   User? _user;
   bool _isLoading = false;
@@ -17,6 +22,42 @@ class AuthProvider with ChangeNotifier {
   bool get isAuthenticated => _user != null;
   bool get isRestoring => _isRestoring;
 
+  Future<User?> _loadCachedMeUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_meUserCacheKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return User.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _loadCachedMeEtag() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_meUserEtagKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveCachedMe(User user, {String? etag}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_meUserCacheKey, jsonEncode(user.toJson()));
+      if (etag != null && etag.trim().isNotEmpty) {
+        await prefs.setString(_meUserEtagKey, etag);
+      } else {
+        await prefs.remove(_meUserEtagKey);
+      }
+    } catch (_) {
+      // best-effort cache
+    }
+  }
+
   /// Attempt to restore an existing session (app restart).
   /// Safe to call multiple times; it will only run once.
   Future<void> restoreSession() async {
@@ -27,6 +68,7 @@ class AuthProvider with ChangeNotifier {
     // Avoid notifying synchronously during widget build.
     Future.microtask(notifyListeners);
 
+    User? cachedUser;
     try {
       final accessToken = await _storage.read(key: 'access_token');
       final refreshToken = await _storage.read(key: 'refresh_token');
@@ -35,16 +77,56 @@ class AuthProvider with ChangeNotifier {
         return;
       }
 
-      // Fetch current user; ApiService will refresh tokens on 401.
-      final me = await _apiService.get('/users/me');
-      if (me is Map && me['user'] != null) {
-        _user = User.fromJson(Map<String, dynamic>.from(me['user']));
-      } else {
-        _user = null;
+      // Warm-start: load cached profile immediately (best-effort), then
+      // revalidate cheaply via ETag.
+      cachedUser = await _loadCachedMeUser();
+      if (cachedUser != null && _user == null) {
+        _user = cachedUser;
+        Future.microtask(notifyListeners);
       }
+
+      final cachedEtag = await _loadCachedMeEtag();
+
+      // Fetch current user; ApiService will refresh tokens on 401.
+      final response = await _apiService.getResponse(
+        '/users/me',
+        extraHeaders: {
+          if (cachedEtag != null && cachedEtag.trim().isNotEmpty)
+            'If-None-Match': cachedEtag.trim(),
+        },
+      );
+
+      if (response.statusCode == 304) {
+        // Profile unchanged; keep cached user.
+        if (_user == null) {
+          _user = cachedUser;
+        }
+        return;
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        if (response.body.isEmpty) {
+          _user = null;
+          return;
+        }
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['user'] != null) {
+          _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
+          await _saveCachedMe(
+            _user!,
+            etag: response.headers['etag'],
+          );
+        } else {
+          _user = null;
+        }
+        return;
+      }
+
+      // Any other status: keep cached user if we have one; otherwise log out.
+      _user ??= cachedUser;
     } catch (_) {
-      // If restoration fails, keep user logged out.
-      _user = null;
+      // If restoration fails, keep cached user if we have one.
+      _user ??= cachedUser;
     } finally {
       _isRestoring = false;
       notifyListeners();
@@ -122,6 +204,7 @@ class AuthProvider with ChangeNotifier {
       final response = await _apiService.put('/users/me', body);
       if (response is Map && response['user'] != null) {
         _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        await _saveCachedMe(_user!, etag: null);
         return _user;
       }
       throw Exception('Invalid response from server');
@@ -138,10 +221,46 @@ class AuthProvider with ChangeNotifier {
     
     // Set user
     _user = User.fromJson(response['user']);
+
+    // Cache immediately (etag unknown until next /users/me GET)
+    if (_user != null) {
+      await _saveCachedMe(_user!, etag: null);
+    }
+  }
+
+  Future<User?> uploadAvatar(String filePath) async {
+    if (_user == null) return null;
+
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await _apiService.postMultipartFile(
+        '/users/me/avatar',
+        fieldName: 'avatar',
+        filePath: filePath,
+      );
+
+      if (response is Map && response['user'] != null) {
+        _user = User.fromJson(Map<String, dynamic>.from(response['user']));
+        await _saveCachedMe(_user!, etag: null);
+        return _user;
+      }
+      throw Exception('Invalid response from server');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> logout() async {
     await _storage.deleteAll();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_meUserCacheKey);
+      await prefs.remove(_meUserEtagKey);
+    } catch (_) {
+      // ignore
+    }
     _user = null;
     notifyListeners();
   }

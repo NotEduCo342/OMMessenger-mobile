@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration {
@@ -22,7 +22,14 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        // Future migrations will go here
+        if (from < 2) {
+          await m.addColumn(messages, messages.createdAtUnix);
+          // Backfill from existing created_at (stored as unix milliseconds in sqlite).
+          await customStatement(
+            'UPDATE messages SET created_at_unix = created_at / 1000 '
+            'WHERE created_at_unix IS NULL AND created_at IS NOT NULL;',
+          );
+        }
       },
     );
   }
@@ -43,7 +50,7 @@ class AppDatabase extends _$AppDatabase {
           ..where((m) =>
               (m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
               (m.senderId.equals(userId) & m.isSentByMe.equals(false)))
-          ..orderBy([(m) => OrderingTerm.asc(m.serverId), (m) => OrderingTerm.asc(m.id)])
+          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
           ..limit(limit))
         .get();
   }
@@ -58,19 +65,31 @@ class AppDatabase extends _$AppDatabase {
           ..where((m) =>
               ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
                   (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
-              m.id.isSmallerThanValue(cursorId))
-          ..orderBy([(m) => OrderingTerm.asc(m.serverId), (m) => OrderingTerm.asc(m.id)])
+              m.serverId.isNotNull() &
+              m.serverId.isSmallerThanValue(cursorId))
+          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
           ..limit(limit))
         .get();
   }
 
   /// Update message with server ID after ACK
-  Future<bool> updateMessageWithServerId(String clientId, int serverId, String status) {
+  Future<bool> updateMessageWithServerInfo(
+    String clientId,
+    int serverId,
+    String status, {
+    int? createdAtUnix,
+  }) {
+    final createdAtUtc = createdAtUnix != null
+        ? DateTime.fromMillisecondsSinceEpoch(createdAtUnix * 1000, isUtc: true)
+        : null;
+
     return (update(messages)..where((m) => m.clientId.equals(clientId))).write(
       MessagesCompanion(
         serverId: Value(serverId),
         status: Value(status),
-        updatedAt: Value(DateTime.now()),
+        createdAtUnix: Value(createdAtUnix),
+        createdAt: createdAtUtc != null ? Value(createdAtUtc) : const Value.absent(),
+        updatedAt: Value(DateTime.now().toUtc()),
       ),
     ).then((rows) => rows > 0);
   }

@@ -304,7 +304,7 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeText = DateFormat('HH:mm').format(message.createdAt);
+    final timeText = DateFormat('HH:mm').format(message.createdAtLocal);
     final colorScheme = Theme.of(context).colorScheme;
 
     final bubbleColor = isMe
