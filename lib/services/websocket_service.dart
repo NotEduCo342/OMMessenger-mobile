@@ -238,6 +238,21 @@ class WebSocketService {
     });
   }
 
+  void sendGroupChatMessage({
+    required String clientId,
+    required int groupId,
+    required String content,
+    String messageType = 'text',
+  }) {
+    send({
+      'type': 'chat',
+      'client_id': clientId,
+      'group_id': groupId,
+      'content': content,
+      'message_type': messageType,
+    });
+  }
+
   void sendTyping(int recipientId, bool isTyping) {
     send({
       'type': 'typing',
@@ -250,6 +265,14 @@ class WebSocketService {
     send({
       'type': 'read',
       'message_id': messageId,
+    });
+  }
+
+  void sendGroupRead(int groupId, int lastReadMessageId) {
+    send({
+      'type': 'group_read',
+      'group_id': groupId,
+      'last_read_message_id': lastReadMessageId,
     });
   }
 

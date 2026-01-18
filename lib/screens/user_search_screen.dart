@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
+import '../models/conversation.dart';
 import '../providers/message_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/user_avatar.dart';
@@ -63,13 +64,19 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
   void _openChat(User user) {
     // Persist peer profile so we don't fall back to placeholders.
     context.read<MessageProvider>().upsertConversationPeer(user);
+    final conversationId = 'user_${user.id}';
     // Initialize message loading for this user.
-    context.read<MessageProvider>().loadMessages(user.id);
+    context.read<MessageProvider>().openConversation(conversationId);
+    context.read<MessageProvider>().loadMessages(conversationId);
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ChatScreen(user: user),
+        builder: (_) => ChatScreen(
+          conversationId: conversationId,
+          type: ConversationType.dm,
+          user: user,
+        ),
       ),
     );
   }

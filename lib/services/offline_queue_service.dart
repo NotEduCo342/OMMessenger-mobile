@@ -6,7 +6,13 @@ import 'connectivity_service.dart';
 class OfflineQueueService {
   final AppDatabase _db;
   final ConnectivityService _connectivityService;
-  final Future<void> Function(String clientId, int recipientId, String content) onMessageReady;
+  final Future<void> Function({
+    required String clientId,
+    int? recipientId,
+    int? groupId,
+    required String content,
+    required String messageType,
+  }) onMessageReady;
   
   Timer? _retryTimer;
   bool _isProcessing = false;
@@ -49,7 +55,8 @@ class OfflineQueueService {
   /// Add message to offline queue
   Future<void> enqueueMessage({
     required String clientId,
-    required int recipientId,
+    int? recipientId,
+    int? groupId,
     required String content,
     String messageType = 'text',
   }) async {
@@ -57,6 +64,7 @@ class OfflineQueueService {
       PendingMessagesCompanion(
         clientId: drift.Value(clientId),
         recipientId: drift.Value(recipientId),
+        groupId: drift.Value(groupId),
         content: drift.Value(content),
         messageType: drift.Value(messageType),
         retryCount: const drift.Value(0),
@@ -80,7 +88,13 @@ class OfflineQueueService {
 
         try {
           // Callback to send message via WebSocket
-          await onMessageReady(message.clientId, message.recipientId ?? 0, message.content);
+          await onMessageReady(
+            clientId: message.clientId,
+            recipientId: message.recipientId,
+            groupId: message.groupId,
+            content: message.content,
+            messageType: message.messageType,
+          );
 
           // Don't delete yet - wait for ACK
           // Will be deleted in message provider after successful ACK

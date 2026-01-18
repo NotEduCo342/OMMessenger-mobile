@@ -8,12 +8,12 @@ import 'tables.dart';
 
 part 'database.g.dart';
 
-@DriftDatabase(tables: [Messages, PendingMessages, Conversations, SyncState])
+@DriftDatabase(tables: [Messages, PendingMessages, Conversations, GroupReadStates, SyncState])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration {
@@ -36,6 +36,13 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('DROP TABLE IF EXISTS conversations;');
           await m.createTable(conversations);
         }
+
+        if (from < 4) {
+          // Conversations is a cache table; safe to drop/recreate with unified schema.
+          await customStatement('DROP TABLE IF EXISTS conversations;');
+          await m.createTable(conversations);
+          await m.createTable(groupReadStates);
+        }
       },
     );
   }
@@ -50,30 +57,83 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  (String kind, int id) _parseConversationId(String conversationId) {
+    final trimmed = conversationId.trim();
+    if (trimmed.startsWith('user_')) {
+      return ('user', int.parse(trimmed.substring(5)));
+    }
+    if (trimmed.startsWith('group_')) {
+      return ('group', int.parse(trimmed.substring(6)));
+    }
+    throw ArgumentError('Invalid conversationId: $conversationId');
+  }
+
   /// Get messages for a conversation
-  Future<List<Message>> getMessagesForUser(int userId, {int limit = 50}) {
+  Future<List<Message>> getMessagesForConversation(
+    String conversationId,
+    int currentUserId, {
+    int limit = 50,
+  }) {
+    final parsed = _parseConversationId(conversationId);
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      return (select(messages)
+            ..where((m) => m.groupId.equals(groupId))
+            ..orderBy([
+              (m) => OrderingTerm.desc(m.createdAtUnix),
+              (m) => OrderingTerm.desc(m.serverId),
+              (m) => OrderingTerm.desc(m.id),
+            ])
+            ..limit(limit))
+          .get();
+    }
+
+    final userId = parsed.$2;
     return (select(messages)
           ..where((m) =>
               (m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
               (m.senderId.equals(userId) & m.isSentByMe.equals(false)))
-          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
+          ..orderBy([
+            (m) => OrderingTerm.desc(m.createdAtUnix),
+            (m) => OrderingTerm.desc(m.serverId),
+            (m) => OrderingTerm.desc(m.id),
+          ])
           ..limit(limit))
         .get();
   }
 
   /// Get messages after a cursor (for pagination)
   Future<List<Message>> getMessagesAfterCursor(
-    int userId,
+    String conversationId,
     int cursorId, {
     int limit = 50,
   }) {
+    final parsed = _parseConversationId(conversationId);
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      return (select(messages)
+            ..where((m) => m.groupId.equals(groupId) &
+                m.serverId.isNotNull() &
+                m.serverId.isSmallerThanValue(cursorId))
+            ..orderBy([
+              (m) => OrderingTerm.desc(m.serverId),
+              (m) => OrderingTerm.desc(m.id),
+            ])
+            ..limit(limit))
+          .get();
+    }
+
+    final userId = parsed.$2;
     return (select(messages)
           ..where((m) =>
               ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
                   (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
               m.serverId.isNotNull() &
               m.serverId.isSmallerThanValue(cursorId))
-          ..orderBy([(m) => OrderingTerm.desc(m.serverId), (m) => OrderingTerm.desc(m.id)])
+          ..orderBy([
+            (m) => OrderingTerm.desc(m.serverId),
+            (m) => OrderingTerm.desc(m.id),
+          ])
           ..limit(limit))
         .get();
   }
@@ -192,18 +252,26 @@ class AppDatabase extends _$AppDatabase {
   /// Get all conversations ordered by last message time
   Future<List<Conversation>> getAllConversations() {
     return (select(conversations)
-          ..orderBy([(c) => OrderingTerm.desc(c.lastMessageTime)]))
+          ..orderBy([
+            (c) => OrderingTerm.desc(c.lastMessageCreatedAtUnix),
+            (c) => OrderingTerm.desc(c.lastMessageTime),
+            (c) => OrderingTerm.desc(c.updatedAt),
+          ]))
         .get();
   }
 
-  /// Get conversation by user ID
-  Future<Conversation?> getConversation(int userId) {
-    return (select(conversations)..where((c) => c.otherUserId.equals(userId))).getSingleOrNull();
+  /// Get conversation by id
+  Future<Conversation?> getConversation(String conversationId) {
+    return (select(conversations)
+          ..where((c) => c.conversationId.equals(conversationId)))
+        .getSingleOrNull();
   }
 
   /// Update conversation unread count
-  Future<bool> updateConversationUnreadCount(int userId, int count) {
-    return (update(conversations)..where((c) => c.otherUserId.equals(userId))).write(
+  Future<bool> updateConversationUnreadCount(String conversationId, int count) {
+    return (update(conversations)
+          ..where((c) => c.conversationId.equals(conversationId)))
+        .write(
       ConversationsCompanion(
         unreadCount: Value(count),
         updatedAt: Value(DateTime.now()),
@@ -212,13 +280,68 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Clear unread count for conversation
-  Future<bool> clearUnreadCount(int userId) {
-    return updateConversationUnreadCount(userId, 0);
+  Future<bool> clearUnreadCount(String conversationId) {
+    return updateConversationUnreadCount(conversationId, 0);
+  }
+
+  /// Mark outgoing DM messages as read up to a server message ID.
+  Future<int> markDmMessagesRead(int senderId, int recipientId, int lastReadMessageId) {
+    if (lastReadMessageId <= 0) return Future.value(0);
+    return (update(messages)
+          ..where((m) => m.groupId.isNull())
+          ..where((m) => m.senderId.equals(senderId))
+          ..where((m) => m.recipientId.equals(recipientId))
+          ..where((m) => m.serverId.isSmallerOrEqualValue(lastReadMessageId)))
+        .write(MessagesCompanion(
+          status: const Value('read'),
+          isRead: const Value(true),
+          isDelivered: const Value(true),
+        ));
+  }
+
+  /// Mark incoming DM messages as read up to a server message ID.
+  Future<int> markIncomingDmMessagesRead(int senderId, int recipientId, int lastReadMessageId) {
+    if (lastReadMessageId <= 0) return Future.value(0);
+    return (update(messages)
+          ..where((m) => m.groupId.isNull())
+          ..where((m) => m.senderId.equals(senderId))
+          ..where((m) => m.recipientId.equals(recipientId))
+          ..where((m) => m.serverId.isSmallerOrEqualValue(lastReadMessageId)))
+        .write(MessagesCompanion(
+          status: const Value('read'),
+          isRead: const Value(true),
+          isDelivered: const Value(true),
+        ));
   }
 
   /// Delete conversation
-  Future<int> deleteConversation(int userId) {
-    return (delete(conversations)..where((c) => c.otherUserId.equals(userId))).go();
+  Future<int> deleteConversation(String conversationId) {
+    return (delete(conversations)
+          ..where((c) => c.conversationId.equals(conversationId)))
+        .go();
+  }
+
+  // ==================== Group Read State Operations ====================
+
+  Future<void> upsertGroupReadState(int groupId, int userId, int lastReadMessageId) async {
+    await into(groupReadStates).insertOnConflictUpdate(
+      GroupReadStatesCompanion(
+        groupId: Value(groupId),
+        userId: Value(userId),
+        lastReadMessageId: Value(lastReadMessageId),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  Future<GroupReadState?> getGroupReadState(int groupId, int userId) {
+    return (select(groupReadStates)
+          ..where((g) => g.groupId.equals(groupId) & g.userId.equals(userId)))
+        .getSingleOrNull();
+  }
+
+  Future<List<GroupReadState>> getGroupReadStates(int groupId) {
+    return (select(groupReadStates)..where((g) => g.groupId.equals(groupId))).get();
   }
 
   // ==================== Sync State Operations ====================
@@ -246,6 +369,7 @@ class AppDatabase extends _$AppDatabase {
     await delete(messages).go();
     await delete(pendingMessages).go();
     await delete(conversations).go();
+    await delete(groupReadStates).go();
     await delete(syncState).go();
   }
 

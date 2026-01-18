@@ -36,18 +36,36 @@ class PendingMessages extends Table {
 
 // Conversations - cached conversation metadata
 class Conversations extends Table {
-  IntColumn get otherUserId => integer()();
-  TextColumn get otherUsername => text()();
-  TextColumn get otherFullName => text()();
+  TextColumn get conversationId => text()();
+  TextColumn get conversationType => text()(); // dm | group
+  IntColumn get otherUserId => integer().nullable()();
+  TextColumn get otherUsername => text().nullable()();
+  TextColumn get otherFullName => text().nullable()();
   TextColumn get otherAvatar => text().withDefault(const Constant(''))();
   BoolColumn get otherIsOnline => boolean().withDefault(const Constant(false))();
+  IntColumn get groupId => integer().nullable()();
+  TextColumn get groupName => text().nullable()();
+  TextColumn get groupIcon => text().nullable()();
+  IntColumn get groupMemberCount => integer().nullable()();
   TextColumn get lastMessageContent => text().nullable()();
   DateTimeColumn get lastMessageTime => dateTime().nullable()();
+  IntColumn get lastMessageCreatedAtUnix => integer().nullable()();
   IntColumn get unreadCount => integer().withDefault(const Constant(0))();
   DateTimeColumn get updatedAt => dateTime()();
 
   @override
-  Set<Column> get primaryKey => {otherUserId};
+  Set<Column> get primaryKey => {conversationId};
+}
+
+// Group read states - per-member read progress cache
+class GroupReadStates extends Table {
+  IntColumn get groupId => integer()();
+  IntColumn get userId => integer()();
+  IntColumn get lastReadMessageId => integer().withDefault(const Constant(0))();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {groupId, userId};
 }
 
 // Sync state - track last synced message IDs per user

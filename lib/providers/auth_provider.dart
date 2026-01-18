@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
+import '../services/notification_prefs.dart';
 
 class AuthProvider with ChangeNotifier {
   final ApiService _apiService = ApiService();
@@ -75,6 +76,7 @@ class AuthProvider with ChangeNotifier {
         if (decoded is Map && decoded['user'] != null) {
           _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
           _dlog('Refreshed user.avatar=${_user?.avatar}');
+          await NotificationPrefs.setCurrentUserId(_user!.id);
           await _saveCachedMe(
             _user!,
             etag: response.headers['etag'],
@@ -137,6 +139,9 @@ class AuthProvider with ChangeNotifier {
         if (_user == null) {
           _user = cachedUser;
         }
+        if (_user != null) {
+          await NotificationPrefs.setCurrentUserId(_user!.id);
+        }
         return;
       }
 
@@ -149,6 +154,7 @@ class AuthProvider with ChangeNotifier {
         if (decoded is Map && decoded['user'] != null) {
           _user = User.fromJson(Map<String, dynamic>.from(decoded['user']));
           _dlog('restoreSession: /users/me updated user.avatar=${_user?.avatar}');
+          await NotificationPrefs.setCurrentUserId(_user!.id);
           await _saveCachedMe(
             _user!,
             etag: response.headers['etag'],
@@ -181,6 +187,9 @@ class AuthProvider with ChangeNotifier {
       });
 
       await _handleAuthResponse(response);
+      if (_user != null) {
+        await NotificationPrefs.setCurrentUserId(_user!.id);
+      }
     } catch (e) {
       rethrow;
     } finally {
@@ -202,6 +211,9 @@ class AuthProvider with ChangeNotifier {
       });
 
       await _handleAuthResponse(response);
+      if (_user != null) {
+        await NotificationPrefs.setCurrentUserId(_user!.id);
+      }
     } catch (e) {
       rethrow;
     } finally {

@@ -5,10 +5,13 @@ import 'package:drift/drift.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import '../models/conversation.dart';
+import '../models/group.dart';
 import '../services/websocket_service.dart';
 import '../services/api_service.dart';
 import '../services/offline_queue_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/notification_prefs.dart';
+import '../services/notification_service.dart';
 import '../database/database.dart' hide Message, Conversation;
 
 class MessageProvider with ChangeNotifier {
@@ -21,13 +24,17 @@ class MessageProvider with ChangeNotifier {
   
   StreamSubscription? _connectivitySubscription;
 
-  final Map<int, List<Message>> _messagesByUser = {};
-  final Map<int, Conversation> _conversations = {};
+  final Map<String, List<Message>> _messagesByConversation = {};
+  final Map<String, Conversation> _conversations = {};
   final Map<String, Message> _pendingMessages = {};
   final Map<int, bool> _typingUsers = {};
-  final Map<int, int?> _messageCursors = {}; // Track pagination cursor per user
-  final Map<int, bool> _hasMoreMessages = {}; // Track if more messages exist
+  final Map<String, int?> _messageCursors = {}; // Track pagination cursor per conversation
+  final Map<String, bool> _hasMoreMessages = {}; // Track if more messages exist
   final Set<int> _userFetchInFlight = {};
+  final Map<int, Map<int, int>> _groupReadStates = {}; // groupId -> userId -> lastReadMessageId
+  final Map<int, Map<int, User>> _groupMembers = {}; // groupId -> userId -> User
+
+  String? _activeConversationId;
 
   bool _isInitialized = false;
   User? _currentUser;
@@ -48,11 +55,56 @@ class MessageProvider with ChangeNotifier {
   bool get isOnline => _isOnline;
   int get pendingQueueCount => _pendingQueueCount;
   int? get currentUserId => _currentUser?.id;
-  bool hasMoreMessages(int userId) => _hasMoreMessages[userId] ?? true;
+  bool hasMoreMessages(String conversationId) => _hasMoreMessages[conversationId] ?? true;
 
-  List<Message> getMessages(int userId) {
-    return _messagesByUser[userId] ?? [];
+  List<Message> getMessages(String conversationId) {
+    return _messagesByConversation[conversationId] ?? [];
   }
+
+  Conversation? getConversation(String conversationId) {
+    return _conversations[conversationId];
+  }
+
+  void setActiveConversation(String? conversationId) {
+    _activeConversationId = conversationId;
+  }
+
+  Map<int, int> getGroupReadStates(int groupId) {
+    return _groupReadStates[groupId] ?? const {};
+  }
+
+  Map<int, User> getGroupMembers(int groupId) {
+    return _groupMembers[groupId] ?? const {};
+  }
+
+  List<User> getGroupReadersForMessage(int groupId, int messageId) {
+    final states = _groupReadStates[groupId];
+    if (states == null || states.isEmpty) return const [];
+    final members = _groupMembers[groupId] ?? const {};
+    final readers = <User>[];
+    for (final entry in states.entries) {
+      final userId = entry.key;
+      if (userId == _currentUser?.id) continue;
+      if (entry.value >= messageId) {
+        final user = members[userId];
+        if (user != null) readers.add(user);
+      }
+    }
+    return readers;
+  }
+
+  (String kind, int id) _parseConversationId(String conversationId) {
+    if (conversationId.startsWith('user_')) {
+      return ('user', int.parse(conversationId.substring(5)));
+    }
+    if (conversationId.startsWith('group_')) {
+      return ('group', int.parse(conversationId.substring(6)));
+    }
+    throw ArgumentError('Invalid conversationId: $conversationId');
+  }
+
+  String _dmConversationId(int userId) => 'user_$userId';
+  String _groupConversationId(int groupId) => 'group_$groupId';
 
   bool _isPlaceholderUser(User user) {
     return user.username.startsWith('User ') || user.fullName.startsWith('User ');
@@ -88,6 +140,7 @@ class MessageProvider with ChangeNotifier {
         await _wsService.connect();
         _wsService.requestPing();
       }
+      await NotificationService.instance.cancelAll();
     } catch (_) {
       // Best-effort.
     } finally {
@@ -96,23 +149,33 @@ class MessageProvider with ChangeNotifier {
   }
 
   Future<void> upsertConversationPeer(User otherUser) async {
-    final existing = _conversations[otherUser.id];
+    final conversationId = _dmConversationId(otherUser.id);
+    final existing = _conversations[conversationId];
     final updated = Conversation(
+      conversationId: conversationId,
+      type: ConversationType.dm,
       otherUser: otherUser,
       lastMessage: existing?.lastMessage,
       unreadCount: existing?.unreadCount ?? 0,
       lastActivity: existing?.lastActivity,
     );
-    _conversations[otherUser.id] = updated;
+    _conversations[conversationId] = updated;
 
     await _database.upsertConversation(ConversationsCompanion.insert(
+      conversationId: conversationId,
+      conversationType: conversationTypeToString(ConversationType.dm),
       otherUserId: Value(otherUser.id),
-      otherUsername: otherUser.username,
-      otherFullName: otherUser.fullName,
+      otherUsername: Value(otherUser.username),
+      otherFullName: Value(otherUser.fullName),
       otherAvatar: Value(otherUser.avatar),
       otherIsOnline: Value(otherUser.isOnline),
+      groupId: const Value.absent(),
+      groupName: const Value.absent(),
+      groupIcon: const Value.absent(),
+      groupMemberCount: const Value.absent(),
       lastMessageContent: Value(existing?.lastMessage?.content),
       lastMessageTime: Value(existing?.lastMessage?.createdAt),
+      lastMessageCreatedAtUnix: Value(existing?.lastMessage?.createdAtUnix),
       updatedAt: DateTime.now(),
     ));
 
@@ -186,38 +249,72 @@ class MessageProvider with ChangeNotifier {
       final convos = await _database.getAllConversations();
       
       for (final convo in convos) {
-        _conversations[convo.otherUserId] = Conversation(
-          otherUser: User(
-            id: convo.otherUserId,
-            username: convo.otherUsername,
-            email: '',
-            fullName: convo.otherFullName,
-            avatar: convo.otherAvatar,
-            isOnline: convo.otherIsOnline,
-          ),
-          lastMessage: convo.lastMessageContent != null
-              ? (() {
-                  final createdAtUtc = (convo.lastMessageTime ?? DateTime.now()).toUtc();
-                  return Message(
-                  id: 0,
-                  clientId: '',
-                  senderId: convo.otherUserId,
-                  sender: null,
-                  recipientId: _currentUser?.id,
-                  groupId: null,
-                  content: convo.lastMessageContent!,
-                  messageType: 'text',
-                  status: 'delivered',
-                  isDelivered: true,
-                  isRead: true,
-                  createdAt: createdAtUtc,
-                  createdAtUnix: createdAtUtc.millisecondsSinceEpoch ~/ 1000,
-                );
-                })()
-              : null,
+        final type = conversationTypeFromString(convo.conversationType);
+        final conversationId = convo.conversationId;
+        final otherUser = (type == ConversationType.dm && convo.otherUserId != null)
+            ? User(
+                id: convo.otherUserId!,
+                username: convo.otherUsername ?? 'User ${convo.otherUserId}',
+                email: '',
+                fullName: convo.otherFullName ?? 'User ${convo.otherUserId}',
+                avatar: convo.otherAvatar,
+                isOnline: convo.otherIsOnline,
+              )
+            : null;
+        final group = (type == ConversationType.group && convo.groupId != null)
+            ? Group(
+                id: convo.groupId!,
+                name: convo.groupName ?? 'Group ${convo.groupId}',
+                icon: convo.groupIcon ?? '',
+                memberCount: convo.groupMemberCount ?? 0,
+              )
+            : null;
+
+        Message? lastMessage;
+        if (convo.lastMessageContent != null && (convo.lastMessageTime != null)) {
+          final createdAtUtc = convo.lastMessageTime!.toUtc();
+          final createdAtUnix = convo.lastMessageCreatedAtUnix ??
+              (createdAtUtc.millisecondsSinceEpoch ~/ 1000);
+          lastMessage = Message(
+            id: 0,
+            clientId: '',
+            senderId: otherUser?.id ?? 0,
+            sender: null,
+            recipientId: type == ConversationType.dm ? _currentUser?.id : null,
+            groupId: type == ConversationType.group ? group?.id : null,
+            content: convo.lastMessageContent!,
+            messageType: 'text',
+            status: 'delivered',
+            isDelivered: true,
+            isRead: true,
+            createdAt: createdAtUtc,
+            createdAtUnix: createdAtUnix,
+          );
+        }
+
+        _conversations[conversationId] = Conversation(
+          conversationId: conversationId,
+          type: type,
+          otherUser: otherUser,
+          group: group,
+          lastMessage: lastMessage,
           unreadCount: convo.unreadCount,
           lastActivity: convo.lastMessageTime,
         );
+
+        final title = type == ConversationType.group
+            ? (group?.name ?? 'Group')
+            : (otherUser?.fullName.isNotEmpty == true
+                ? otherUser!.fullName
+                : (otherUser?.username ?? 'User'));
+        await NotificationPrefs.setConversationMeta(
+          conversationId,
+          title: title,
+          isGroup: type == ConversationType.group,
+        );
+        if (lastMessage != null && lastMessage.id > 0) {
+          await NotificationPrefs.setCursor(conversationId, lastMessage.id);
+        }
       }
       
       notifyListeners();
@@ -265,17 +362,14 @@ class MessageProvider with ChangeNotifier {
       for (final item in items) {
         if (item is! Map) continue;
 
-        final peerJson = item['peer'];
-        if (peerJson is! Map) continue;
+        final conversationId = item['conversation_id'] as String?;
+        if (conversationId == null || conversationId.isEmpty) continue;
 
-        final peer = User.fromJson(Map<String, dynamic>.from(peerJson));
         final unreadCount = (item['unread_count'] is int) ? item['unread_count'] as int : 0;
-
-        Message? lastMessage;
         final lastMessageJson = item['last_message'];
-        if (lastMessageJson is Map) {
-          lastMessage = Message.fromJson(Map<String, dynamic>.from(lastMessageJson));
-        }
+        final lastMessage = (lastMessageJson is Map)
+            ? Message.fromJson(Map<String, dynamic>.from(lastMessageJson))
+            : null;
 
         DateTime? lastActivity;
         final lastActivityStr = item['last_activity'];
@@ -288,21 +382,61 @@ class MessageProvider with ChangeNotifier {
         }
         lastActivity ??= lastMessage?.createdAt;
 
-        _conversations[peer.id] = Conversation(
-          otherUser: peer,
+        ConversationType type;
+        User? otherUser;
+        Group? group;
+
+        final peerJson = item['peer'];
+        if (peerJson is Map) {
+          type = ConversationType.dm;
+          otherUser = User.fromJson(Map<String, dynamic>.from(peerJson));
+        } else {
+          type = ConversationType.group;
+          final groupJson = item['group'];
+          if (groupJson is Map) {
+            group = Group.fromJson(Map<String, dynamic>.from(groupJson));
+          }
+        }
+
+        _conversations[conversationId] = Conversation(
+          conversationId: conversationId,
+          type: type,
+          otherUser: otherUser,
+          group: group,
           lastMessage: lastMessage,
           unreadCount: unreadCount,
           lastActivity: lastActivity,
         );
 
+        final title = type == ConversationType.group
+            ? (group?.name ?? 'Group')
+            : (otherUser?.fullName.isNotEmpty == true
+                ? otherUser!.fullName
+                : (otherUser?.username ?? 'User'));
+        await NotificationPrefs.setConversationMeta(
+          conversationId,
+          title: title,
+          isGroup: type == ConversationType.group,
+        );
+        if (lastMessage != null && lastMessage.id > 0) {
+          await NotificationPrefs.setCursor(conversationId, lastMessage.id);
+        }
+
         await _database.upsertConversation(ConversationsCompanion.insert(
-          otherUserId: Value(peer.id),
-          otherUsername: peer.username,
-          otherFullName: peer.fullName,
-          otherAvatar: Value(peer.avatar),
-          otherIsOnline: Value(peer.isOnline),
+          conversationId: conversationId,
+          conversationType: conversationTypeToString(type),
+          otherUserId: Value(otherUser?.id),
+          otherUsername: Value(otherUser?.username),
+          otherFullName: Value(otherUser?.fullName),
+          otherAvatar: Value(otherUser?.avatar ?? ''),
+          otherIsOnline: Value(otherUser?.isOnline ?? false),
+          groupId: Value(group?.id),
+          groupName: Value(group?.name),
+          groupIcon: Value(group?.icon),
+          groupMemberCount: Value(group?.memberCount),
           lastMessageContent: Value(lastMessage?.content),
           lastMessageTime: Value(lastMessage?.createdAt),
+          lastMessageCreatedAtUnix: Value(lastMessage?.createdAtUnix),
           unreadCount: Value(unreadCount),
           updatedAt: DateTime.now(),
         ));
@@ -323,22 +457,27 @@ class MessageProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loadMessages(int userId, {int limit = 20, bool loadMore = false}) async {
+  Future<void> loadMessages(String conversationId, {int limit = 20, bool loadMore = false}) async {
     try {
       // Determine cursor for pagination
       int? cursor;
       if (loadMore) {
-        cursor = _messageCursors[userId];
-        if (cursor == null || !(_hasMoreMessages[userId] ?? true)) {
-          print('No more messages to load for user $userId');
+        cursor = _messageCursors[conversationId];
+        if (cursor == null || !(_hasMoreMessages[conversationId] ?? true)) {
+          print('No more messages to load for conversation $conversationId');
           return; // No more messages or already at end
         }
       }
 
+      final parsed = _parseConversationId(conversationId);
+      final isGroup = parsed.$1 == 'group';
+      final numericId = parsed.$2;
+
       // First, load from local database
       if (!loadMore) {
-        final localMessages = await _database.getMessagesForUser(
-          userId,
+        final localMessages = await _database.getMessagesForConversation(
+          conversationId,
+          _currentUser?.id ?? 0,
           limit: limit,
         );
         
@@ -371,14 +510,14 @@ class MessageProvider with ChangeNotifier {
           // ChatScreen uses ListView(reverse:true). For that, our in-memory list
           // must be newest-first so the newest message (index 0) renders at bottom.
           _sortConversationMessages(msgs);
-          _messagesByUser[userId] = msgs;
+          _messagesByConversation[conversationId] = msgs;
 
           // Cursor should point to the oldest server-backed message we have loaded.
           final oldestServerBacked = msgs.lastWhere(
             (m) => m.id > 0,
             orElse: () => msgs.last,
           );
-          _messageCursors[userId] = oldestServerBacked.id > 0 ? oldestServerBacked.id : null;
+          _messageCursors[conversationId] = oldestServerBacked.id > 0 ? oldestServerBacked.id : null;
           
           notifyListeners();
         }
@@ -387,9 +526,13 @@ class MessageProvider with ChangeNotifier {
       // Then fetch from API if online
       if (!_isOnline) return;
 
-      final endpoint = cursor != null
-          ? '/messages?recipient_id=$userId&limit=$limit&cursor=$cursor'
-          : '/messages?recipient_id=$userId&limit=$limit';
+      final endpoint = isGroup
+          ? (cursor != null
+            ? '/groups/$numericId/messages?limit=$limit&cursor=$cursor'
+            : '/groups/$numericId/messages?limit=$limit')
+          : (cursor != null
+            ? '/messages?recipient_id=$numericId&limit=$limit&cursor=$cursor'
+            : '/messages?recipient_id=$numericId&limit=$limit');
       
       final response = await _apiService.get(endpoint);
       final messages = (response['messages'] as List)
@@ -398,15 +541,15 @@ class MessageProvider with ChangeNotifier {
 
       // Check if more messages exist (backend returns newest-first)
       final hasMore = messages.length == limit;
-      _hasMoreMessages[userId] = hasMore;
+      _hasMoreMessages[conversationId] = hasMore;
 
       if (messages.isNotEmpty) {
         // Backend provides next_cursor (oldest message ID in this page)
         final nextCursor = response['next_cursor'];
         if (nextCursor is int && nextCursor > 0) {
-          _messageCursors[userId] = nextCursor;
+          _messageCursors[conversationId] = nextCursor;
         } else {
-          _messageCursors[userId] = messages.last.id;
+          _messageCursors[conversationId] = messages.last.id;
         }
 
         // Save to database
@@ -432,7 +575,7 @@ class MessageProvider with ChangeNotifier {
         if (loadMore) {
           // Load-more returns older messages. With newest-first ordering, append older
           // items to the end of the list.
-          final list = _messagesByUser.putIfAbsent(userId, () => []);
+          final list = _messagesByConversation.putIfAbsent(conversationId, () => []);
           final existingIds = list.map((m) => m.id).toSet();
           final newMessages = messages.where((m) => !existingIds.contains(m.id)).toList();
           list.addAll(newMessages);
@@ -440,7 +583,7 @@ class MessageProvider with ChangeNotifier {
         } else {
           // Replace with newest-first list from backend, but preserve any pending
           // optimistic messages already shown.
-          final existing = _messagesByUser[userId] ?? const <Message>[];
+          final existing = _messagesByConversation[conversationId] ?? const <Message>[];
           final pending = existing.where((m) => _isPendingMessage(m)).toList();
 
           final merged = <Message>[];
@@ -460,27 +603,27 @@ class MessageProvider with ChangeNotifier {
           }
 
           _sortConversationMessages(deduped);
-          _messagesByUser[userId] = deduped;
-          _updateConversation(userId, deduped);
+          _messagesByConversation[conversationId] = deduped;
+          _updateConversation(conversationId, deduped);
 
           // If we still only have placeholder peer data, try to hydrate from message senders.
-          final conv = _conversations[userId];
-          if (conv != null && _isPlaceholderUser(conv.otherUser)) {
+          final conv = _conversations[conversationId];
+          if (!isGroup && conv != null && conv.otherUser != null && _isPlaceholderUser(conv.otherUser!)) {
             final peerMsg = messages.cast<Message?>().firstWhere(
-                  (m) => m != null && m.senderId == userId && m.sender != null,
+                  (m) => m != null && m.senderId == numericId && m.sender != null,
                   orElse: () => null,
                 );
             final peer = peerMsg?.sender;
             if (peer != null) {
               await upsertConversationPeer(peer);
             } else {
-              await _ensurePeerProfile(userId);
+              await _ensurePeerProfile(numericId);
             }
           }
         }
       } else if (!loadMore) {
         // No messages from API but might have local ones
-        _hasMoreMessages[userId] = false;
+        _hasMoreMessages[conversationId] = false;
       }
 
       notifyListeners();
@@ -491,26 +634,55 @@ class MessageProvider with ChangeNotifier {
 
   /// Called when a conversation screen is opened.
   /// Clears unread count locally immediately and asks the server to mark the DM as read.
-  Future<void> openConversation(int userId) async {
+  Future<void> openConversation(String conversationId) async {
     // Local: clear unread count for snappy UI.
-    final existing = _conversations[userId];
+    final existing = _conversations[conversationId];
     if (existing != null && existing.unreadCount != 0) {
-      _conversations[userId] = existing.copyWith(unreadCount: 0);
-      await _database.clearUnreadCount(userId);
+      _conversations[conversationId] = existing.copyWith(unreadCount: 0);
+      await _database.clearUnreadCount(conversationId);
       notifyListeners();
     }
+
+    await NotificationService.instance.cancelConversation(conversationId);
+
+    final parsed = _parseConversationId(conversationId);
+    final isGroup = parsed.$1 == 'group';
+    final numericId = parsed.$2;
 
     // Server: mark all messages from this peer to me as read.
     // Best-effort; if it fails we'll still have local UI cleared, but on next
     // login the server will re-send unread_count unless this succeeds.
     try {
-      await _apiService.post('/conversations/$userId/read', {});
+      if (isGroup) {
+        // Use newest known server-backed message as last_read_message_id.
+        final list = _messagesByConversation[conversationId] ?? [];
+        final newestServer = list.firstWhere((m) => m.id > 0, orElse: () => list.isEmpty ? Message.empty() : list.first);
+        final lastReadId = newestServer.id > 0 ? newestServer.id : 0;
+        await _apiService.post('/groups/$numericId/read', {
+          'last_read_message_id': lastReadId,
+        });
+        if (lastReadId > 0) {
+          _wsService.sendGroupRead(numericId, lastReadId);
+        }
+
+        await _refreshGroupMembers(numericId);
+        await _refreshGroupReadState(numericId);
+      } else {
+        await _apiService.post('/conversations/$numericId/read', {});
+
+        _markLocalDmRead(conversationId, numericId);
+      }
     } catch (_) {
       // best-effort
     }
   }
 
   void sendMessage(int recipientId, String content) async {
+    // Backward-compatible DM entry point
+    await sendDmMessage(recipientId, content);
+  }
+
+  Future<void> sendDmMessage(int recipientId, String content) async {
     if (_currentUser == null) return;
 
     final clientId = _uuid.v4();
@@ -548,8 +720,10 @@ class MessageProvider with ChangeNotifier {
       isSentByMe: true,
     ));
 
+    final conversationId = _dmConversationId(recipientId);
+
     // Add to message list (ChatScreen reverse:true expects newest-first)
-    final messageList = _messagesByUser.putIfAbsent(recipientId, () => []);
+    final messageList = _messagesByConversation.putIfAbsent(conversationId, () => []);
     // Deduplicate by client_id
     messageList.removeWhere((m) => m.clientId == clientId);
     // Pending outgoing should appear as the newest message.
@@ -558,7 +732,7 @@ class MessageProvider with ChangeNotifier {
     _pendingMessages[clientId] = message;
 
     // Update conversation
-    _updateConversationWithMessage(recipientId, message);
+    _updateConversationWithMessage(conversationId, message);
     notifyListeners();
 
     // Always add to offline queue for retry logic
@@ -566,13 +740,88 @@ class MessageProvider with ChangeNotifier {
       clientId: clientId,
       recipientId: recipientId,
       content: content,
+      messageType: 'text',
     );
     await _updateQueueCount();
 
     // Best-effort immediate send (queue will retry if this fails).
     if (_isOnline) {
       try {
-        await _sendQueuedMessage(clientId, recipientId, content);
+        await _sendQueuedMessage(
+          clientId: clientId,
+          recipientId: recipientId,
+          content: content,
+          messageType: 'text',
+        );
+      } catch (_) {
+        // Ignore: queued retry will handle it.
+      }
+    }
+  }
+
+  Future<void> sendGroupMessage(int groupId, String content) async {
+    if (_currentUser == null) return;
+
+    final clientId = _uuid.v4();
+    final now = DateTime.now().toUtc();
+    final nowUnix = now.millisecondsSinceEpoch ~/ 1000;
+    final conversationId = _groupConversationId(groupId);
+
+    final message = Message(
+      id: 0,
+      clientId: clientId,
+      senderId: _currentUser!.id,
+      sender: _currentUser,
+      recipientId: null,
+      groupId: groupId,
+      content: content,
+      messageType: 'text',
+      status: 'pending',
+      isDelivered: false,
+      isRead: false,
+      createdAt: now,
+      createdAtUnix: nowUnix,
+    );
+
+    await _database.insertMessage(MessagesCompanion.insert(
+      clientId: clientId,
+      senderId: _currentUser!.id,
+      recipientId: const Value.absent(),
+      groupId: Value(groupId),
+      content: content,
+      messageType: const Value('text'),
+      status: const Value('pending'),
+      createdAt: now,
+      createdAtUnix: Value(nowUnix),
+      updatedAt: now,
+      isSentByMe: true,
+    ));
+
+    final messageList = _messagesByConversation.putIfAbsent(conversationId, () => []);
+    messageList.removeWhere((m) => m.clientId == clientId);
+    messageList.insert(0, message);
+    _sortConversationMessages(messageList);
+    _pendingMessages[clientId] = message;
+
+    _updateConversationWithMessage(conversationId, message);
+    notifyListeners();
+
+    await _queueService.enqueueMessage(
+      clientId: clientId,
+      groupId: groupId,
+      content: content,
+      messageType: 'text',
+    );
+    await _updateQueueCount();
+
+    if (_isOnline) {
+      try {
+        await _sendQueuedMessage(
+          clientId: clientId,
+          groupId: groupId,
+          content: content,
+          messageType: 'text',
+        );
       } catch (_) {
         // Ignore: queued retry will handle it.
       }
@@ -588,6 +837,12 @@ class MessageProvider with ChangeNotifier {
         break;
       case 'message':
         _handleIncomingMessage(data);
+        break;
+      case 'group_read_update':
+        _handleGroupReadUpdate(data);
+        break;
+      case 'read_update':
+        _handleReadUpdate(data);
         break;
       case 'typing':
         _handleTyping(data);
@@ -675,14 +930,20 @@ class MessageProvider with ChangeNotifier {
       );
 
       // Replace in message list and re-sort by ID
-      final userId = pendingMessage.recipientId!;
-      final messages = _messagesByUser[userId];
+      final conversationId = pendingMessage.groupId != null
+          ? _groupConversationId(pendingMessage.groupId!)
+          : _dmConversationId(pendingMessage.recipientId!);
+      final messages = _messagesByConversation[conversationId];
       if (messages != null) {
         final index = messages.indexWhere((m) => m.clientId == clientId);
         if (index != -1) {
           messages[index] = updatedMessage;
           _sortConversationMessages(messages);
         }
+      }
+
+      if (serverId > 0) {
+        await NotificationPrefs.setCursor(conversationId, serverId);
       }
 
       _pendingMessages.remove(clientId);
@@ -702,14 +963,16 @@ class MessageProvider with ChangeNotifier {
     print('📥 Incoming message: ${messageData['id']}');
 
     final message = Message.fromJson(messageData);
-    final otherUserId = message.senderId;
+    final isGroup = message.groupId != null;
+    final conversationId = isGroup
+        ? _groupConversationId(message.groupId!)
+        : _dmConversationId(message.senderId);
 
-    // Persist peer profile ASAP to avoid placeholders.
+    // Persist peer profile ASAP to avoid placeholders (DM + sender profile cache for groups).
     if (message.sender != null) {
       await upsertConversationPeer(message.sender!);
-    } else {
-      // If sender profile isn't included, hydrate via API.
-      await _ensurePeerProfile(otherUserId);
+    } else if (!isGroup) {
+      await _ensurePeerProfile(message.senderId);
     }
 
     // Save to database
@@ -730,25 +993,76 @@ class MessageProvider with ChangeNotifier {
     ));
 
     // Update conversation in database
-    await _database.upsertConversation(ConversationsCompanion.insert(
-      otherUserId: Value(otherUserId),
-      otherUsername: message.sender?.username ?? 'User $otherUserId',
-      otherFullName: message.sender?.fullName ?? 'User $otherUserId',
-      otherAvatar: const Value(''),
-      otherIsOnline: const Value(false),
-      lastMessageContent: Value(message.content),
-      lastMessageTime: Value(message.createdAt),
-      updatedAt: message.createdAt,
-    ));
+    if (isGroup) {
+      final existing = _conversations[conversationId];
+      final group = existing?.group ?? Group(id: message.groupId!, name: 'Group ${message.groupId}', icon: '', memberCount: 0);
+      await _database.upsertConversation(ConversationsCompanion.insert(
+        conversationId: conversationId,
+        conversationType: conversationTypeToString(ConversationType.group),
+        otherUserId: const Value.absent(),
+        otherUsername: const Value.absent(),
+        otherFullName: const Value.absent(),
+        otherAvatar: const Value(''),
+        otherIsOnline: const Value(false),
+        groupId: Value(group.id),
+        groupName: Value(group.name),
+        groupIcon: Value(group.icon),
+        groupMemberCount: Value(group.memberCount),
+        lastMessageContent: Value(message.content),
+        lastMessageTime: Value(message.createdAt),
+        lastMessageCreatedAtUnix: Value(message.createdAtUnix),
+        updatedAt: message.createdAt,
+      ));
+    } else {
+      final otherUserId = message.senderId;
+      await _database.upsertConversation(ConversationsCompanion.insert(
+        conversationId: conversationId,
+        conversationType: conversationTypeToString(ConversationType.dm),
+        otherUserId: Value(otherUserId),
+        otherUsername: Value(message.sender?.username ?? 'User $otherUserId'),
+        otherFullName: Value(message.sender?.fullName ?? 'User $otherUserId'),
+        otherAvatar: Value(message.sender?.avatar ?? ''),
+        otherIsOnline: Value(message.sender?.isOnline ?? false),
+        groupId: const Value.absent(),
+        groupName: const Value.absent(),
+        groupIcon: const Value.absent(),
+        groupMemberCount: const Value.absent(),
+        lastMessageContent: Value(message.content),
+        lastMessageTime: Value(message.createdAt),
+        lastMessageCreatedAtUnix: Value(message.createdAtUnix),
+        updatedAt: message.createdAt,
+      ));
+    }
 
     // Add to message list (keep newest-first)
-    final list = _messagesByUser.putIfAbsent(otherUserId, () => []);
+    final list = _messagesByConversation.putIfAbsent(conversationId, () => []);
     // Remove duplicate if exists
     list.removeWhere((m) => m.id == message.id || (m.clientId != null && m.clientId == message.clientId));
     list.add(message);
     _sortConversationMessages(list);
-    _updateConversationWithMessage(otherUserId, message);
+    _updateConversationWithMessage(conversationId, message);
     notifyListeners();
+
+    if (message.id > 0) {
+      await NotificationPrefs.setCursor(conversationId, message.id);
+    }
+
+    if (_activeConversationId == conversationId) {
+      if (isGroup && message.groupId != null && message.id > 0) {
+        _wsService.sendGroupRead(message.groupId!, message.id);
+        final uid = _currentUser?.id;
+        if (uid != null) {
+          await _database.upsertGroupReadState(message.groupId!, uid, message.id);
+          final groupMap = _groupReadStates.putIfAbsent(message.groupId!, () => {});
+          final current = groupMap[uid] ?? 0;
+          if (message.id > current) {
+            groupMap[uid] = message.id;
+          }
+        }
+      } else if (!isGroup && message.id > 0) {
+        _wsService.sendRead(message.id);
+      }
+    }
 
     // Send delivery acknowledgment
     _wsService.send({
@@ -781,6 +1095,93 @@ class MessageProvider with ChangeNotifier {
     }
   }
 
+  void _handleGroupReadUpdate(Map<String, dynamic> data) async {
+    final groupId = data['group_id'] as int?;
+    final userId = data['user_id'] as int?;
+    final lastRead = data['last_read_message_id'] as int?;
+    if (groupId == null || userId == null || lastRead == null) return;
+
+    await _database.upsertGroupReadState(groupId, userId, lastRead);
+    final groupMap = _groupReadStates.putIfAbsent(groupId, () => {});
+    final current = groupMap[userId] ?? 0;
+    if (lastRead > current) {
+      groupMap[userId] = lastRead;
+    }
+    notifyListeners();
+  }
+
+  void _handleReadUpdate(Map<String, dynamic> data) async {
+    final readerId = data['user_id'] as int?;
+    final lastRead = data['last_read_message_id'] as int?;
+    final conversationId = data['conversation_id'] as String?;
+    if (readerId == null || lastRead == null || conversationId == null) return;
+
+    final currentUserId = _currentUser?.id;
+    if (currentUserId == null) return;
+
+    final list = _messagesByConversation[conversationId];
+    if (list != null) {
+      bool changed = false;
+      for (var i = 0; i < list.length; i++) {
+        final m = list[i];
+        if (m.senderId == currentUserId &&
+            m.recipientId == readerId &&
+            m.id > 0 &&
+            m.id <= lastRead &&
+            !m.isRead) {
+          list[i] = Message(
+            id: m.id,
+            clientId: m.clientId,
+            senderId: m.senderId,
+            sender: m.sender,
+            recipientId: m.recipientId,
+            groupId: m.groupId,
+            content: m.content,
+            messageType: m.messageType,
+            status: 'read',
+            isDelivered: true,
+            isRead: true,
+            createdAt: m.createdAt,
+            createdAtUnix: m.createdAtUnix,
+          );
+          changed = true;
+        }
+      }
+      if (changed) {
+        _sortConversationMessages(list);
+      }
+    }
+
+    await _database.markDmMessagesRead(currentUserId, readerId, lastRead);
+
+    final conv = _conversations[conversationId];
+    if (conv?.lastMessage != null &&
+        conv!.lastMessage!.senderId == currentUserId &&
+        conv.lastMessage!.id <= lastRead &&
+        !conv.lastMessage!.isRead) {
+      final m = conv.lastMessage!;
+      _conversations[conversationId] = conv.copyWith(
+        lastMessage: Message(
+          id: m.id,
+          clientId: m.clientId,
+          senderId: m.senderId,
+          sender: m.sender,
+          recipientId: m.recipientId,
+          groupId: m.groupId,
+          content: m.content,
+          messageType: m.messageType,
+          status: 'read',
+          isDelivered: true,
+          isRead: true,
+          createdAt: m.createdAt,
+          createdAtUnix: m.createdAtUnix,
+        ),
+      );
+    }
+
+    notifyListeners();
+  }
+
   void _handleBatchMessages(Map<String, dynamic> data) {
     final messages = data['messages'] as List?;
     if (messages == null) return;
@@ -792,28 +1193,150 @@ class MessageProvider with ChangeNotifier {
     }
   }
 
-  void _updateConversation(int userId, List<Message> messages) {
+  Future<void> _refreshGroupMembers(int groupId) async {
+    try {
+      final response = await _apiService.get('/groups/$groupId/members');
+      final list = response is List
+          ? response
+          : (response is Map ? (response['members'] as List? ?? []) : []);
+
+      final members = <int, User>{};
+      for (final item in list) {
+        if (item is Map<String, dynamic>) {
+          final user = User.fromJson(item);
+          members[user.id] = user;
+        }
+      }
+
+      if (members.isNotEmpty) {
+        _groupMembers[groupId] = members;
+        final conversationId = _groupConversationId(groupId);
+        final conv = _conversations[conversationId];
+        if (conv?.group != null) {
+          final g = conv!.group!;
+          _conversations[conversationId] = conv.copyWith(
+            group: Group(
+              id: g.id,
+              name: g.name,
+              icon: g.icon,
+              memberCount: members.length,
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  Future<void> _refreshGroupReadState(int groupId) async {
+    try {
+      final response = await _apiService.get('/groups/$groupId/read-state');
+      if (response is! Map) return;
+      final members = (response['members'] as List?) ?? [];
+
+      final groupMap = _groupReadStates.putIfAbsent(groupId, () => {});
+      for (final item in members) {
+        if (item is Map<String, dynamic>) {
+          final userId = item['user_id'] as int?;
+          final lastRead = item['last_read_message_id'] as int? ?? 0;
+          if (userId != null) {
+            final existing = groupMap[userId] ?? 0;
+            if (lastRead > existing) {
+              groupMap[userId] = lastRead;
+            }
+            await _database.upsertGroupReadState(groupId, userId, lastRead);
+          }
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  void _markLocalDmRead(String conversationId, int peerId) async {
+    final currentUserId = _currentUser?.id;
+    if (currentUserId == null) return;
+    final list = _messagesByConversation[conversationId];
+    if (list == null || list.isEmpty) return;
+
+    final newestServer = list.firstWhere((m) => m.id > 0, orElse: () => list.first);
+    final lastReadId = newestServer.id > 0 ? newestServer.id : 0;
+    if (lastReadId == 0) return;
+
+    bool changed = false;
+    for (var i = 0; i < list.length; i++) {
+      final m = list[i];
+      if (m.senderId == peerId &&
+          m.recipientId == currentUserId &&
+          m.id > 0 &&
+          m.id <= lastReadId &&
+          !m.isRead) {
+        list[i] = Message(
+          id: m.id,
+          clientId: m.clientId,
+          senderId: m.senderId,
+          sender: m.sender,
+          recipientId: m.recipientId,
+          groupId: m.groupId,
+          content: m.content,
+          messageType: m.messageType,
+          status: 'read',
+          isDelivered: true,
+          isRead: true,
+          createdAt: m.createdAt,
+          createdAtUnix: m.createdAtUnix,
+        );
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      _sortConversationMessages(list);
+      notifyListeners();
+    }
+
+    await _database.markIncomingDmMessagesRead(peerId, currentUserId, lastReadId);
+  }
+
+  void _updateConversation(String conversationId, List<Message> messages) {
     if (messages.isEmpty) return;
 
     final lastMessage = messages.first;
-    final existingConv = _conversations[userId];
-    final otherFromLast = (lastMessage.senderId == userId) ? lastMessage.sender : null;
+    final existingConv = _conversations[conversationId];
+    final parsed = _parseConversationId(conversationId);
+    final isGroup = parsed.$1 == 'group';
+    final numericId = parsed.$2;
 
     final conversation = Conversation(
-      otherUser: otherFromLast ?? existingConv?.otherUser ?? User(
-            id: userId,
-            username: 'User $userId',
-            email: '',
-            fullName: 'User $userId',
-            avatar: '',
-            isOnline: false,
-          ),
+      conversationId: conversationId,
+      type: isGroup ? ConversationType.group : ConversationType.dm,
+      otherUser: isGroup
+          ? null
+          : (existingConv?.otherUser ??
+              User(
+                id: numericId,
+                username: 'User $numericId',
+                email: '',
+                fullName: 'User $numericId',
+                avatar: '',
+                isOnline: false,
+              )),
+      group: isGroup
+          ? (existingConv?.group ??
+              Group(
+                id: numericId,
+                name: 'Group $numericId',
+                icon: '',
+                memberCount: 0,
+              ))
+          : null,
       lastMessage: lastMessage,
-      unreadCount: 0,
+      unreadCount: existingConv?.unreadCount ?? 0,
       lastActivity: lastMessage.createdAt,
     );
 
-    _conversations[userId] = conversation;
+    _conversations[conversationId] = conversation;
   }
 
   bool _isPendingMessage(Message m) {
@@ -835,44 +1358,88 @@ class MessageProvider with ChangeNotifier {
         return (b.clientId ?? '').compareTo(a.clientId ?? '');
       }
 
+      final byUnix = b.createdAtUnix.compareTo(a.createdAtUnix);
+      if (byUnix != 0) return byUnix;
       final byId = b.id.compareTo(a.id);
       if (byId != 0) return byId;
       return b.createdAt.compareTo(a.createdAt);
     });
   }
 
-  void _updateConversationWithMessage(int userId, Message message) async {
-    final existingConv = _conversations[userId];
-    
+  void _updateConversationWithMessage(String conversationId, Message message) async {
+    final existingConv = _conversations[conversationId];
+    final parsed = _parseConversationId(conversationId);
+    final isGroup = parsed.$1 == 'group';
+    final numericId = parsed.$2;
+
+    final shouldIncrementUnread = message.senderId != _currentUser?.id &&
+      _activeConversationId != conversationId;
+    final unreadCount = shouldIncrementUnread
+      ? (existingConv?.unreadCount ?? 0) + 1
+      : 0;
+
     final conversation = Conversation(
-      otherUser: existingConv?.otherUser ?? User(
-        id: userId,
-        username: 'User $userId',
-        email: '',
-        fullName: 'User $userId',
-        avatar: '',
-        isOnline: false,
-      ),
+      conversationId: conversationId,
+      type: isGroup ? ConversationType.group : ConversationType.dm,
+      otherUser: isGroup
+          ? null
+          : (existingConv?.otherUser ??
+              User(
+                id: numericId,
+                username: 'User $numericId',
+                email: '',
+                fullName: 'User $numericId',
+                avatar: '',
+                isOnline: false,
+              )),
+      group: isGroup
+          ? (existingConv?.group ??
+              Group(
+                id: numericId,
+                name: 'Group $numericId',
+                icon: '',
+                memberCount: 0,
+              ))
+          : null,
       lastMessage: message,
-      unreadCount: message.senderId != _currentUser?.id 
-          ? (existingConv?.unreadCount ?? 0) + 1 
-          : 0,
+      unreadCount: unreadCount,
       lastActivity: message.createdAt,
     );
-    
-    _conversations[userId] = conversation;
-    
-    // Persist to database
+
+    _conversations[conversationId] = conversation;
+
     await _database.upsertConversation(ConversationsCompanion.insert(
-      otherUserId: Value(userId),
-      otherUsername: conversation.otherUser.username,
-      otherFullName: conversation.otherUser.fullName,
-      otherAvatar: Value(conversation.otherUser.avatar),
-      otherIsOnline: Value(conversation.otherUser.isOnline),
+      conversationId: conversationId,
+      conversationType: conversationTypeToString(conversation.type),
+      otherUserId: Value(conversation.otherUser?.id),
+      otherUsername: Value(conversation.otherUser?.username),
+      otherFullName: Value(conversation.otherUser?.fullName),
+      otherAvatar: Value(conversation.otherUser?.avatar ?? ''),
+      otherIsOnline: Value(conversation.otherUser?.isOnline ?? false),
+      groupId: Value(conversation.group?.id),
+      groupName: Value(conversation.group?.name),
+      groupIcon: Value(conversation.group?.icon),
+      groupMemberCount: Value(conversation.group?.memberCount),
       lastMessageContent: Value(message.content),
       lastMessageTime: Value(message.createdAt),
+      lastMessageCreatedAtUnix: Value(message.createdAtUnix),
+      unreadCount: Value(unreadCount),
       updatedAt: message.createdAt,
     ));
+
+    final title = conversation.type == ConversationType.group
+        ? (conversation.group?.name ?? 'Group')
+        : (conversation.otherUser?.fullName.isNotEmpty == true
+            ? conversation.otherUser!.fullName
+            : (conversation.otherUser?.username ?? 'User'));
+    await NotificationPrefs.setConversationMeta(
+      conversationId,
+      title: title,
+      isGroup: conversation.type == ConversationType.group,
+    );
+    if (message.id > 0) {
+      await NotificationPrefs.setCursor(conversationId, message.id);
+    }
   }
 
   void sendTypingIndicator(int recipientId, bool isTyping) {
@@ -883,7 +1450,25 @@ class MessageProvider with ChangeNotifier {
     _wsService.sendRead(messageId);
   }
 
-  Future<void> _sendQueuedMessage(String clientId, int recipientId, String content) async {
+  Future<void> setConversationMuted(String conversationId, bool muted) async {
+    await NotificationPrefs.setMuted(conversationId, muted);
+    if (muted) {
+      await NotificationService.instance.cancelConversation(conversationId);
+    }
+    notifyListeners();
+  }
+
+  Future<bool> isConversationMuted(String conversationId) {
+    return NotificationPrefs.isMuted(conversationId);
+  }
+
+  Future<void> _sendQueuedMessage({
+    required String clientId,
+    int? recipientId,
+    int? groupId,
+    required String content,
+    required String messageType,
+  }) async {
     // Check network connectivity
     if (!_isOnline) {
       throw Exception('offline');
@@ -903,10 +1488,24 @@ class MessageProvider with ChangeNotifier {
       }
     }
 
+    if (groupId != null) {
+      _wsService.sendGroupChatMessage(
+        clientId: clientId,
+        groupId: groupId,
+        content: content,
+        messageType: messageType,
+      );
+      return;
+    }
+    if (recipientId == null) {
+      throw Exception('missing_recipient');
+    }
+
     _wsService.sendChatMessage(
       clientId: clientId,
       recipientId: recipientId,
       content: content,
+      messageType: messageType,
     );
   }
 

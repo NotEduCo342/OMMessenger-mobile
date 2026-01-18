@@ -6,6 +6,7 @@ import '../providers/auth_provider.dart';
 import '../providers/message_provider.dart';
 import '../models/conversation.dart';
 import '../services/websocket_service.dart';
+import '../services/notification_prefs.dart';
 import '../services/update_service.dart';
 import '../widgets/offline_banner.dart';
 import '../widgets/user_avatar.dart';
@@ -16,13 +17,18 @@ import 'user_search_screen.dart';
 
 class _HomeLifecycleObserver with WidgetsBindingObserver {
   final VoidCallback onResumed;
+  final VoidCallback onPaused;
 
-  _HomeLifecycleObserver({required this.onResumed});
+  _HomeLifecycleObserver({required this.onResumed, required this.onPaused});
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       onResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      onPaused();
     }
   }
 }
@@ -44,16 +50,21 @@ class _HomeScreenState extends State<HomeScreen> {
   late final _HomeLifecycleObserver _lifecycleObserver = _HomeLifecycleObserver(
     onResumed: () {
       if (!mounted) return;
+      NotificationPrefs.setAppForeground(true);
       final user = context.read<AuthProvider>().user;
       if (user != null) {
         context.read<MessageProvider>().handleAppResumed();
       }
+    },
+    onPaused: () {
+      NotificationPrefs.setAppForeground(false);
     },
   );
 
   @override
   void initState() {
     super.initState();
+    NotificationPrefs.setAppForeground(true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final user = context.read<AuthProvider>().user;
       if (user != null) {
@@ -250,13 +261,37 @@ class _ConversationTile extends StatelessWidget {
     final timeText = lastMessage != null
         ? timeago.format(lastMessage.createdAt, locale: 'en_short')
         : '';
+    final isGroup = conversation.type == ConversationType.group;
+    final title = isGroup
+        ? (conversation.group?.name ?? 'Group')
+        : (conversation.otherUser?.fullName.isNotEmpty == true
+            ? conversation.otherUser!.fullName
+            : (conversation.otherUser?.username ?? 'User'));
+    final avatarLabel = isGroup
+        ? (conversation.group?.name ?? 'Group')
+        : (conversation.otherUser?.username ?? 'User');
+    final avatarUrl = isGroup
+        ? (conversation.group?.icon ?? '')
+        : (conversation.otherUser?.avatar ?? '');
+    final subtitlePrefix = isGroup
+        ? (conversation.lastMessage?.sender?.username != null
+            ? '${conversation.lastMessage!.sender!.username}: '
+            : '')
+        : (lastMessage?.senderId == context.read<MessageProvider>().currentUserId
+            ? 'You: '
+            : '');
 
     return InkWell(
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ChatScreen(user: conversation.otherUser),
+            builder: (_) => ChatScreen(
+              conversationId: conversation.conversationId,
+              type: conversation.type,
+              user: conversation.otherUser,
+              group: conversation.group,
+            ),
           ),
         );
       },
@@ -276,11 +311,11 @@ class _ConversationTile extends StatelessWidget {
             Stack(
               children: [
                 UserAvatar(
-                  username: conversation.otherUser.username,
-                  avatarUrl: conversation.otherUser.avatar,
+                  username: avatarLabel,
+                  avatarUrl: avatarUrl,
                   radius: 28,
                 ),
-                if (conversation.otherUser.isOnline)
+                if (!isGroup && (conversation.otherUser?.isOnline ?? false))
                   Positioned(
                     right: 0,
                     bottom: 0,
@@ -309,9 +344,7 @@ class _ConversationTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          conversation.otherUser.fullName.isNotEmpty
-                              ? conversation.otherUser.fullName
-                              : conversation.otherUser.username,
+                          title,
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
@@ -337,7 +370,7 @@ class _ConversationTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          lastMessage?.content ?? 'No messages yet',
+                          '${subtitlePrefix}${lastMessage?.content ?? 'No messages yet'}',
                           style: TextStyle(
                             fontSize: 14,
                             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
@@ -346,6 +379,27 @@ class _ConversationTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                        FutureBuilder<bool>(
+                          future: context
+                              .read<MessageProvider>()
+                              .isConversationMuted(conversation.conversationId),
+                          builder: (context, snapshot) {
+                            if (snapshot.data == true) {
+                              return Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Icons.notifications_off,
+                                  size: 16,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withOpacity(0.45),
+                                ),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
                       if (conversation.unreadCount > 0)
                         Container(
                           margin: const EdgeInsets.only(left: 8),

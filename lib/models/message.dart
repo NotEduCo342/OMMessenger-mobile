@@ -33,6 +33,25 @@ class Message {
     required this.createdAtUnix,
   });
 
+  static Message empty() {
+    final now = DateTime.now().toUtc();
+    return Message(
+      id: 0,
+      clientId: '',
+      senderId: 0,
+      sender: null,
+      recipientId: null,
+      groupId: null,
+      content: '',
+      messageType: 'text',
+      status: 'pending',
+      isDelivered: false,
+      isRead: false,
+      createdAt: now,
+      createdAtUnix: now.millisecondsSinceEpoch ~/ 1000,
+    );
+  }
+
   DateTime get createdAtLocal => createdAt.toLocal();
 
   factory Message.fromJson(Map<String, dynamic> json) {

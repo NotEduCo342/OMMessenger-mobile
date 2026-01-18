@@ -3,14 +3,25 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../models/user.dart';
+import '../models/group.dart';
 import '../models/message.dart';
+import '../models/conversation.dart';
 import '../providers/message_provider.dart';
 import '../widgets/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
-  final User user;
+  final String conversationId;
+  final ConversationType type;
+  final User? user;
+  final Group? group;
 
-  const ChatScreen({super.key, required this.user});
+  const ChatScreen({
+    super.key,
+    required this.conversationId,
+    required this.type,
+    this.user,
+    this.group,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -22,15 +33,21 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _typingTimer;
   bool _isTyping = false;
   bool _isLoadingMore = false;
+  bool _isMuted = false;
+  bool _muteLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<MessageProvider>().upsertConversationPeer(widget.user);
-      context.read<MessageProvider>().openConversation(widget.user.id);
-      context.read<MessageProvider>().loadMessages(widget.user.id);
+      if (widget.type == ConversationType.dm && widget.user != null) {
+        context.read<MessageProvider>().upsertConversationPeer(widget.user!);
+      }
+      context.read<MessageProvider>().setActiveConversation(widget.conversationId);
+      context.read<MessageProvider>().openConversation(widget.conversationId);
+      context.read<MessageProvider>().loadMessages(widget.conversationId);
+      _loadMuteState();
     });
   }
 
@@ -39,7 +56,31 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.dispose();
     _scrollController.dispose();
     _typingTimer?.cancel();
+    context.read<MessageProvider>().setActiveConversation(null);
     super.dispose();
+  }
+
+  Future<void> _loadMuteState() async {
+    final muted = await context
+        .read<MessageProvider>()
+        .isConversationMuted(widget.conversationId);
+    if (!mounted) return;
+    setState(() {
+      _isMuted = muted;
+      _muteLoaded = true;
+    });
+  }
+
+  Future<void> _toggleMute() async {
+    final next = !_isMuted;
+    await context
+        .read<MessageProvider>()
+        .setConversationMuted(widget.conversationId, next);
+    if (!mounted) return;
+    setState(() {
+      _isMuted = next;
+      _muteLoaded = true;
+    });
   }
 
   void _onScroll() {
@@ -48,7 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _scrollController.position.maxScrollExtent - 100 &&
         !_isLoadingMore) {
       final messageProvider = context.read<MessageProvider>();
-      if (messageProvider.hasMoreMessages(widget.user.id)) {
+      if (messageProvider.hasMoreMessages(widget.conversationId)) {
         _loadMoreMessages();
       }
     }
@@ -63,7 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await context.read<MessageProvider>().loadMessages(
-        widget.user.id,
+        widget.conversationId,
         loadMore: true,
       );
     } finally {
@@ -76,16 +117,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onTextChanged(String text) {
+    if (widget.type == ConversationType.group) return;
+    final recipientId = _getDmRecipientId(context);
+    if (recipientId == null) return;
+
     if (text.isNotEmpty && !_isTyping) {
       _isTyping = true;
-      context.read<MessageProvider>().sendTypingIndicator(widget.user.id, true);
+      context.read<MessageProvider>().sendTypingIndicator(recipientId, true);
     }
 
     _typingTimer?.cancel();
     _typingTimer = Timer(const Duration(seconds: 2), () {
       if (_isTyping) {
         _isTyping = false;
-        context.read<MessageProvider>().sendTypingIndicator(widget.user.id, false);
+        final recipientId = _getDmRecipientId(context);
+        if (recipientId != null) {
+          context.read<MessageProvider>().sendTypingIndicator(recipientId, false);
+        }
       }
     });
   }
@@ -94,12 +142,27 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    context.read<MessageProvider>().sendMessage(widget.user.id, text);
+    if (widget.type == ConversationType.group) {
+      final groupId = _getGroupId(context);
+      if (groupId != null) {
+        context.read<MessageProvider>().sendGroupMessage(groupId, text);
+      }
+    } else {
+      final recipientId = _getDmRecipientId(context);
+      if (recipientId != null) {
+        context.read<MessageProvider>().sendMessage(recipientId, text);
+      }
+    }
     _messageController.clear();
 
     if (_isTyping) {
       _isTyping = false;
-      context.read<MessageProvider>().sendTypingIndicator(widget.user.id, false);
+      if (widget.type == ConversationType.dm) {
+        final recipientId = _getDmRecipientId(context);
+        if (recipientId != null) {
+          context.read<MessageProvider>().sendTypingIndicator(recipientId, false);
+        }
+      }
     }
 
     // Scroll to bottom (newest). With reverse:true, that's minScrollExtent.
@@ -117,23 +180,41 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final messageProvider = context.watch<MessageProvider>();
-    final messages = messageProvider.getMessages(widget.user.id);
-    final isOtherUserTyping = messageProvider.isTyping(widget.user.id);
+    final messages = messageProvider.getMessages(widget.conversationId);
+    final conversation = messageProvider.getConversation(widget.conversationId);
+    final isGroup = (conversation?.type ?? widget.type) == ConversationType.group;
+    final group = conversation?.group ?? widget.group;
+    final user = conversation?.otherUser ?? widget.user;
+    final dmRecipientId = _getDmRecipientId(context);
+    final isOtherUserTyping = !isGroup && dmRecipientId != null
+        ? messageProvider.isTyping(dmRecipientId)
+        : false;
     final currentUserId = messageProvider.currentUserId;
 
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
+        actions: [
+          IconButton(
+            onPressed: _muteLoaded ? _toggleMute : null,
+            tooltip: _isMuted ? 'Unmute' : 'Mute',
+            icon: Icon(
+              _isMuted ? Icons.notifications_off : Icons.notifications_active,
+            ),
+          ),
+        ],
         title: Row(
           children: [
             Stack(
               children: [
                 UserAvatar(
-                  username: widget.user.username,
-                  avatarUrl: widget.user.avatar,
+                  username: isGroup
+                      ? (group?.name ?? 'Group')
+                      : (user?.username ?? 'User'),
+                  avatarUrl: isGroup ? (group?.icon ?? '') : (user?.avatar ?? ''),
                   radius: 20,
                 ),
-                if (widget.user.isOnline)
+                if (!isGroup && (user?.isOnline ?? false))
                   Positioned(
                     right: 0,
                     bottom: 0,
@@ -158,20 +239,27 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.user.fullName.isNotEmpty
-                        ? widget.user.fullName
-                        : widget.user.username,
+                    isGroup
+                        ? (group?.name ?? 'Group')
+                        : ((user?.fullName.isNotEmpty ?? false)
+                            ? user!.fullName
+                            : (user?.username ?? 'User')),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  if (isOtherUserTyping)
+                  if (!isGroup && isOtherUserTyping)
                     const Text(
                       'typing...',
                       style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
                     )
-                  else if (widget.user.isOnline)
+                  else if (!isGroup && (user?.isOnline ?? false))
                     const Text(
                       'online',
                       style: TextStyle(fontSize: 13),
+                    )
+                  else if (isGroup && group != null)
+                    Text(
+                      '${group.memberCount} members',
+                      style: const TextStyle(fontSize: 13),
                     ),
                 ],
               ),
@@ -201,10 +289,26 @@ class _ChatScreenState extends State<ChatScreen> {
                         padding: const EdgeInsets.all(16),
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
+                          final message = messages[index];
+                          String? readByLabel;
+                          if (isGroup &&
+                              currentUserId != null &&
+                              message.senderId == currentUserId &&
+                              group?.id != null &&
+                              message.id > 0) {
+                            final readers = messageProvider.getGroupReadersForMessage(
+                              group!.id,
+                              message.id,
+                            );
+                            if (readers.isNotEmpty) {
+                              readByLabel = _formatReadByLabel(readers);
+                            }
+                          }
                           return _MessageBubble(
-                            message: messages[index],
+                            message: message,
                             isMe: currentUserId != null &&
-                                messages[index].senderId == currentUserId,
+                                message.senderId == currentUserId,
+                            readByLabel: readByLabel,
                           );
                         },
                       ),
@@ -293,13 +397,60 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  int? _getDmRecipientId(BuildContext context) {
+    if (widget.type == ConversationType.group) return null;
+    final fromWidget = widget.user?.id;
+    if (fromWidget != null) return fromWidget;
+    final convo = context.read<MessageProvider>().getConversation(widget.conversationId);
+    final fromConvo = convo?.otherUser?.id;
+    if (fromConvo != null) return fromConvo;
+    if (widget.conversationId.startsWith('user_')) {
+      return int.tryParse(widget.conversationId.substring(5));
+    }
+    return null;
+  }
+
+  int? _getGroupId(BuildContext context) {
+    if (widget.type == ConversationType.dm) return null;
+    final fromWidget = widget.group?.id;
+    if (fromWidget != null) return fromWidget;
+    final convo = context.read<MessageProvider>().getConversation(widget.conversationId);
+    final fromConvo = convo?.group?.id;
+    if (fromConvo != null) return fromConvo;
+    if (widget.conversationId.startsWith('group_')) {
+      return int.tryParse(widget.conversationId.substring(6));
+    }
+    return null;
+  }
+
+  String _formatReadByLabel(List<User> readers) {
+    if (readers.isEmpty) return '';
+    final names = readers.map((u) {
+      final name = u.fullName.isNotEmpty ? u.fullName : u.username;
+      return name.isNotEmpty ? name : 'User ${u.id}';
+    }).toList();
+
+    const maxNames = 3;
+    if (names.length <= maxNames) {
+      return 'Seen by ${names.join(', ')}';
+    }
+    final first = names.take(maxNames).join(', ');
+    final remaining = names.length - maxNames;
+    return 'Seen by $first +$remaining';
+  }
 }
 
 class _MessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
+  final String? readByLabel;
 
-  const _MessageBubble({required this.message, required this.isMe});
+  const _MessageBubble({
+    required this.message,
+    required this.isMe,
+    this.readByLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -380,6 +531,21 @@ class _MessageBubble extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (isMe && readByLabel != null) ...[
+                  const SizedBox(height: 2),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      readByLabel!,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: metaColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
