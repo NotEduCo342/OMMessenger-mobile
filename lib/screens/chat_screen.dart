@@ -8,6 +8,7 @@ import '../models/message.dart';
 import '../models/conversation.dart';
 import '../providers/message_provider.dart';
 import '../widgets/user_avatar.dart';
+import 'group_details_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -65,6 +66,7 @@ class _ChatScreenState extends State<ChatScreen> {
         .read<MessageProvider>()
         .isConversationMuted(widget.conversationId);
     if (!mounted) return;
+    if (_muteLoaded) return; // avoid overriding a user toggle
     setState(() {
       _isMuted = muted;
       _muteLoaded = true;
@@ -73,14 +75,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _toggleMute() async {
     final next = !_isMuted;
-    await context
-        .read<MessageProvider>()
-        .setConversationMuted(widget.conversationId, next);
-    if (!mounted) return;
-    setState(() {
-      _isMuted = next;
-      _muteLoaded = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isMuted = next;
+        _muteLoaded = true;
+      });
+    }
+
+    try {
+      await context
+          .read<MessageProvider>()
+          .setConversationMuted(widget.conversationId, next);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isMuted = !next;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to update mute setting')),
+      );
+    }
   }
 
   void _onScroll() {
@@ -195,6 +209,21 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         titleSpacing: 0,
         actions: [
+          if (isGroup)
+            IconButton(
+              onPressed: group == null
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => GroupDetailsScreen(group: group!),
+                        ),
+                      );
+                    },
+              tooltip: 'Group details',
+              icon: const Icon(Icons.info_outline),
+            ),
           IconButton(
             onPressed: _muteLoaded ? _toggleMute : null,
             tooltip: _isMuted ? 'Unmute' : 'Mute',

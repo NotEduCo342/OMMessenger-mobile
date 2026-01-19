@@ -23,6 +23,7 @@ class MessageProvider with ChangeNotifier {
   final _uuid = const Uuid();
   
   StreamSubscription? _connectivitySubscription;
+  StreamSubscription<ConnectionStatus>? _wsStatusSubscription;
 
   final Map<String, List<Message>> _messagesByConversation = {};
   final Map<String, Conversation> _conversations = {};
@@ -40,6 +41,8 @@ class MessageProvider with ChangeNotifier {
   User? _currentUser;
   bool _isOnline = true;
   int _pendingQueueCount = 0;
+  bool _syncInFlight = false;
+  DateTime? _lastSyncAt;
 
   List<Conversation> get conversations => _conversations.values.toList()
     ..sort((a, b) {
@@ -216,9 +219,15 @@ class MessageProvider with ChangeNotifier {
 
     // Load conversations from database first so UI isn't empty while we connect.
     await _loadConversations();
+    await _loadGroupReadStatesFromDb();
 
     // Listen to WebSocket messages
     _wsService.messageStream.listen(_handleWebSocketMessage);
+    _wsStatusSubscription = _wsService.statusStream.listen((status) {
+      if (status == ConnectionStatus.connected) {
+        _maybeSyncAfterConnect();
+      }
+    });
 
     // Connect WebSocket (don't block initial UI)
     Future.microtask(() async {
@@ -320,6 +329,139 @@ class MessageProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('Error loading conversations: $e');
+    }
+  }
+
+  Future<void> _loadGroupReadStatesFromDb() async {
+    try {
+      final states = await _database.getAllGroupReadStates();
+      if (states.isEmpty) return;
+
+      _groupReadStates.clear();
+      for (final s in states) {
+        final groupMap = _groupReadStates.putIfAbsent(s.groupId, () => {});
+        final current = groupMap[s.userId] ?? 0;
+        if (s.lastReadMessageId > current) {
+          groupMap[s.userId] = s.lastReadMessageId;
+        }
+      }
+      notifyListeners();
+    } catch (e) {
+      print('Error loading group read states: $e');
+    }
+  }
+
+  Future<void> _maybeSyncAfterConnect({bool force = false}) async {
+    if (!_isOnline || _syncInFlight) return;
+    final now = DateTime.now();
+    if (!force && _lastSyncAt != null) {
+      final delta = now.difference(_lastSyncAt!);
+      if (delta.inSeconds < 8) return; // avoid rapid re-syncs
+    }
+    await _syncAfterReconnect();
+  }
+
+  Future<void> _syncAfterReconnect() async {
+    if (_currentUser == null) return;
+    _syncInFlight = true;
+    try {
+      final convos = await _database.getAllConversations();
+      if (convos.isEmpty) return;
+
+      final payload = <Map<String, dynamic>>[];
+      for (final c in convos) {
+        final lastId = await _database.getLatestServerMessageIdForConversation(c.conversationId);
+        payload.add({
+          'conversation_id': c.conversationId,
+          'last_message_id': lastId,
+        });
+      }
+
+      final response = await _apiService.post('/messages/sync', {
+        'conversations': payload,
+        'limit': 200,
+      });
+
+      if (response is! Map) return;
+      final results = response['results'];
+      if (results is! List) return;
+
+      for (final entry in results) {
+        if (entry is! Map) continue;
+        final conversationId = entry['conversation_id'] as String?;
+        final messagesJson = entry['messages'];
+        if (conversationId == null || messagesJson is! List) continue;
+
+        final messages = messagesJson
+            .whereType<Map>()
+            .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
+            .toList();
+        if (messages.isEmpty) continue;
+
+        await _applySyncedMessages(conversationId, messages);
+      }
+
+      notifyListeners();
+    } catch (e) {
+      print('Error syncing conversations: $e');
+    } finally {
+      _syncInFlight = false;
+      _lastSyncAt = DateTime.now();
+    }
+  }
+
+  Future<void> _applySyncedMessages(String conversationId, List<Message> messages) async {
+    messages.sort((a, b) => a.id.compareTo(b.id));
+
+    for (final message in messages) {
+      if (message.id <= 0) continue;
+      final exists = await _database.hasMessageWithServerId(message.id);
+      if (exists) continue;
+
+      await _database.insertMessage(MessagesCompanion.insert(
+        clientId: message.clientId ?? _uuid.v4(),
+        serverId: Value(message.id),
+        senderId: message.senderId,
+        recipientId: Value(message.recipientId),
+        groupId: Value(message.groupId),
+        content: message.content,
+        messageType: Value(message.messageType),
+        status: Value(message.status),
+        isDelivered: Value(message.isDelivered),
+        isRead: Value(message.isRead),
+        createdAt: message.createdAt,
+        createdAtUnix: Value(message.createdAtUnix),
+        updatedAt: message.createdAt,
+        isSentByMe: message.senderId == _currentUser?.id,
+      ));
+
+      final list = _messagesByConversation[conversationId];
+      if (list != null) {
+        list.removeWhere((m) => m.id == message.id ||
+            (m.clientId != null && m.clientId == message.clientId));
+        list.add(message);
+        _sortConversationMessages(list);
+      }
+
+      _updateConversationWithMessage(conversationId, message);
+    }
+
+    if (_activeConversationId == conversationId && messages.isNotEmpty) {
+      final newest = messages.last;
+      if (newest.groupId != null && newest.id > 0) {
+        _wsService.sendGroupRead(newest.groupId!, newest.id);
+        final uid = _currentUser?.id;
+        if (uid != null) {
+          await _database.upsertGroupReadState(newest.groupId!, uid, newest.id);
+          final groupMap = _groupReadStates.putIfAbsent(newest.groupId!, () => {});
+          final current = groupMap[uid] ?? 0;
+          if (newest.id > current) {
+            groupMap[uid] = newest.id;
+          }
+        }
+      } else if (newest.id > 0) {
+        _wsService.sendRead(newest.id);
+      }
     }
   }
 
@@ -1552,6 +1694,7 @@ class MessageProvider with ChangeNotifier {
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
+    _wsStatusSubscription?.cancel();
     _queueService.dispose();
     _wsService.dispose();
     _database.close();

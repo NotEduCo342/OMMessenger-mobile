@@ -138,6 +138,40 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
+  /// Get latest server message ID for a conversation (0 if none).
+  Future<int> getLatestServerMessageIdForConversation(String conversationId) async {
+    final parsed = _parseConversationId(conversationId);
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      final row = await (select(messages)
+            ..where((m) => m.groupId.equals(groupId) & m.serverId.isNotNull())
+            ..orderBy([(m) => OrderingTerm.desc(m.serverId)])
+            ..limit(1))
+          .getSingleOrNull();
+      return row?.serverId ?? 0;
+    }
+
+    final userId = parsed.$2;
+    final row = await (select(messages)
+          ..where((m) =>
+              ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
+                  (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
+              m.serverId.isNotNull())
+          ..orderBy([(m) => OrderingTerm.desc(m.serverId)])
+          ..limit(1))
+        .getSingleOrNull();
+    return row?.serverId ?? 0;
+  }
+
+  Future<bool> hasMessageWithServerId(int serverId) async {
+    if (serverId <= 0) return false;
+    final row = await (select(messages)
+          ..where((m) => m.serverId.equals(serverId))
+          ..limit(1))
+        .getSingleOrNull();
+    return row != null;
+  }
+
   /// Update message with server ID after ACK
   Future<bool> updateMessageWithServerInfo(
     String clientId,
@@ -342,6 +376,10 @@ class AppDatabase extends _$AppDatabase {
 
   Future<List<GroupReadState>> getGroupReadStates(int groupId) {
     return (select(groupReadStates)..where((g) => g.groupId.equals(groupId))).get();
+  }
+
+  Future<List<GroupReadState>> getAllGroupReadStates() {
+    return select(groupReadStates).get();
   }
 
   // ==================== Sync State Operations ====================

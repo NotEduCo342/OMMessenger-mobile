@@ -12,6 +12,9 @@ import '../widgets/offline_banner.dart';
 import '../widgets/user_avatar.dart';
 import '../widgets/update_dialog.dart';
 import 'chat_screen.dart';
+import 'group_create_screen.dart';
+import 'group_discover_screen.dart';
+import 'group_invite_join_screen.dart';
 import 'settings_screen.dart';
 import 'user_search_screen.dart';
 
@@ -136,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (context, snapshot) {
               final status = snapshot.data ?? ConnectionStatus.disconnected;
               return Padding(
-                padding: const EdgeInsets.only(right: 8.0),
+                padding: const EdgeInsets.only(right: 12.0),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -181,17 +184,9 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
-          ),
         ],
       ),
+      drawer: _HomeDrawer(user: user),
       body: Column(
         children: [
           const OfflineBanner(),
@@ -424,6 +419,107 @@ class _ConversationTile extends StatelessWidget {
                 ],
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeDrawer extends StatelessWidget {
+  final user;
+
+  const _HomeDrawer({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final displayName = (user?.fullName?.isNotEmpty == true)
+        ? user!.fullName
+        : (user?.username ?? 'User');
+    final subtitle = user?.username ?? '';
+
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          children: [
+            ListTile(
+              leading: UserAvatar(
+                username: displayName,
+                avatarUrl: user?.avatar ?? '',
+                radius: 22,
+              ),
+              title: Text(
+                displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              subtitle: subtitle.isNotEmpty
+                  ? Text(
+                      '@$subtitle',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('New chat'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const UserSearchScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.group_add),
+              title: const Text('Create group'),
+              onTap: () async {
+                Navigator.pop(context);
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const GroupCreateScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: const Text('Discover groups'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const GroupDiscoverScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Join by invite'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const GroupInviteJoinScreen()),
+                );
+              },
+            ),
+            const Spacer(),
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
