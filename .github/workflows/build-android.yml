@@ -218,14 +218,47 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
             echo "❌ No APK files found for upload"
           fi
-      
-      - name: Upload APK artifacts
+      - name: Detect split APKs
         if: success() && steps.verify_apks.outputs.found == 'true'
+        id: split_apks
+        run: |
+          ARMV7="build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-armeabi-v7a.apk"
+          ARM64="build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-arm64-v8a.apk"
+          X86_64="build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-x86_64.apk"
+
+          if [ -f "$ARMV7" ]; then echo "armv7=true" >> $GITHUB_OUTPUT; else echo "armv7=false" >> $GITHUB_OUTPUT; fi
+          if [ -f "$ARM64" ]; then echo "arm64=true" >> $GITHUB_OUTPUT; else echo "arm64=false" >> $GITHUB_OUTPUT; fi
+          if [ -f "$X86_64" ]; then echo "x86_64=true" >> $GITHUB_OUTPUT; else echo "x86_64=false" >> $GITHUB_OUTPUT; fi
+
+      - name: Upload ARMv7 APK
+        if: success() && steps.split_apks.outputs.armv7 == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: OMMessenger-APKs-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
+          name: OMMessenger-ARMv7-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
           path: |
-            build/app/outputs/flutter-apk/OMMessenger-*.apk
+            build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-armeabi-v7a.apk
+            build/app/outputs/flutter-apk/checksums.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload ARM64 APK
+        if: success() && steps.split_apks.outputs.arm64 == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMMessenger-ARM64-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
+          path: |
+            build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-arm64-v8a.apk
+            build/app/outputs/flutter-apk/checksums.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload x86_64 APK
+        if: success() && steps.split_apks.outputs.x86_64 == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMMessenger-x86_64-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}
+          path: |
+            build/app/outputs/flutter-apk/OMMessenger-v${{ steps.version.outputs.version_name }}-b${{ steps.version.outputs.build_number }}-x86_64.apk
             build/app/outputs/flutter-apk/checksums.txt
           retention-days: 30
           if-no-files-found: warn
