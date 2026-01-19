@@ -88,6 +88,7 @@ class _GroupDiscoverScreenState extends State<GroupDiscoverScreen> {
     try {
       final group = await _service.joinByHandle(handle);
       if (!mounted) return;
+      context.read<MessageProvider>().addOrUpdateGroupConversation(group, notify: false);
       _openGroupChat(group);
     } catch (e) {
       if (!mounted) return;
@@ -108,6 +109,7 @@ class _GroupDiscoverScreenState extends State<GroupDiscoverScreen> {
     try {
       final joined = await _service.joinByHandle(group.handle!);
       if (!mounted) return;
+      context.read<MessageProvider>().addOrUpdateGroupConversation(joined, notify: false);
       _openGroupChat(joined);
     } catch (_) {
       if (!mounted) return;
@@ -120,6 +122,7 @@ class _GroupDiscoverScreenState extends State<GroupDiscoverScreen> {
   void _openGroupChat(Group group) {
     final conversationId = 'group_${group.id}';
     final provider = context.read<MessageProvider>();
+    provider.addOrUpdateGroupConversation(group, notify: false);
     provider.openConversation(conversationId);
     provider.loadMessages(conversationId);
 

@@ -43,6 +43,8 @@ class MessageProvider with ChangeNotifier {
   int _pendingQueueCount = 0;
   bool _syncInFlight = false;
   DateTime? _lastSyncAt;
+  DateTime? _lastConversationsRefreshAt;
+  bool _isRestoringPeers = false;
 
   List<Conversation> get conversations => _conversations.values.toList()
     ..sort((a, b) {
@@ -59,6 +61,7 @@ class MessageProvider with ChangeNotifier {
   int get pendingQueueCount => _pendingQueueCount;
   int? get currentUserId => _currentUser?.id;
   bool hasMoreMessages(String conversationId) => _hasMoreMessages[conversationId] ?? true;
+  bool get isRestoringPeers => _isRestoringPeers;
 
   List<Message> getMessages(String conversationId) {
     return _messagesByConversation[conversationId] ?? [];
@@ -209,6 +212,7 @@ class MessageProvider with ChangeNotifier {
         // Just came back online
         _queueService.setOnline(true);
         _wsService.connect();
+        _maybeRefreshConversations(force: true);
       } else if (wasOnline && !_isOnline) {
         // Just went offline
         _queueService.setOnline(false);
@@ -226,6 +230,7 @@ class MessageProvider with ChangeNotifier {
     _wsStatusSubscription = _wsService.statusStream.listen((status) {
       if (status == ConnectionStatus.connected) {
         _maybeSyncAfterConnect();
+        _maybeRefreshConversations();
       }
     });
 
@@ -361,6 +366,20 @@ class MessageProvider with ChangeNotifier {
     await _syncAfterReconnect();
   }
 
+  Future<void> _maybeRefreshConversations({bool force = false}) async {
+    if (!_isOnline) return;
+    if (!force && _lastConversationsRefreshAt != null) {
+      final delta = DateTime.now().difference(_lastConversationsRefreshAt!);
+      if (delta.inSeconds < 10) return;
+    }
+    try {
+      await refreshConversations();
+      _lastConversationsRefreshAt = DateTime.now();
+    } catch (_) {
+      // best-effort
+    }
+  }
+
   Future<void> _syncAfterReconnect() async {
     if (_currentUser == null) return;
     _syncInFlight = true;
@@ -474,11 +493,137 @@ class MessageProvider with ChangeNotifier {
 
     try {
       await _syncConversationsFromServer();
+      await _syncRecentPeersFromServer();
+      await _syncGroupsFromServer();
       // Reload from DB to ensure UI stays consistent with persisted state.
       await _loadConversations();
     } catch (e) {
       print('Error refreshing conversations: $e');
       rethrow;
+    }
+  }
+
+  Future<void> _syncGroupsFromServer() async {
+    try {
+      final response = await _apiService.get('/groups');
+      if (response is! List) return;
+      for (final item in response) {
+        if (item is Map<String, dynamic>) {
+          final group = Group.fromJson(item);
+          await addOrUpdateGroupConversation(group, notify: false);
+        }
+      }
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  Future<void> _syncRecentPeersFromServer() async {
+    if (_isRestoringPeers) return;
+    _isRestoringPeers = true;
+    notifyListeners();
+    try {
+      final response = await _apiService.get('/conversations/peers?limit=100');
+      if (response is! Map) return;
+      final peers = response['peers'];
+      if (peers is! List) return;
+
+      for (final entry in peers) {
+        if (entry is! Map) continue;
+        final peerJson = entry['peer'];
+        if (peerJson is! Map) continue;
+        final peer = User.fromJson(Map<String, dynamic>.from(peerJson));
+
+        final conversationId = _dmConversationId(peer.id);
+        final existing = _conversations[conversationId];
+
+        final convo = Conversation(
+          conversationId: conversationId,
+          type: ConversationType.dm,
+          otherUser: peer,
+          group: null,
+          lastMessage: existing?.lastMessage,
+          unreadCount: existing?.unreadCount ?? 0,
+          lastActivity: existing?.lastActivity,
+        );
+
+        _conversations[conversationId] = convo;
+
+        await _database.upsertConversation(ConversationsCompanion.insert(
+          conversationId: conversationId,
+          conversationType: conversationTypeToString(ConversationType.dm),
+          otherUserId: Value(peer.id),
+          otherUsername: Value(peer.username),
+          otherFullName: Value(peer.fullName),
+          otherAvatar: Value(peer.avatar),
+          otherIsOnline: Value(peer.isOnline),
+          groupId: const Value.absent(),
+          groupName: const Value.absent(),
+          groupIcon: const Value.absent(),
+          groupMemberCount: const Value.absent(),
+          lastMessageContent: Value(convo.lastMessage?.content),
+          lastMessageTime: Value(convo.lastMessage?.createdAt),
+          lastMessageCreatedAtUnix: Value(convo.lastMessage?.createdAtUnix),
+          unreadCount: Value(convo.unreadCount),
+          updatedAt: DateTime.now(),
+        ));
+
+        final title = peer.fullName.isNotEmpty ? peer.fullName : peer.username;
+        await NotificationPrefs.setConversationMeta(
+          conversationId,
+          title: title,
+          isGroup: false,
+        );
+      }
+    } catch (_) {
+      // best-effort
+    } finally {
+      _isRestoringPeers = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> addOrUpdateGroupConversation(
+    Group group, {
+    Message? lastMessage,
+    bool notify = true,
+  }) async {
+    final conversationId = _groupConversationId(group.id);
+    final existing = _conversations[conversationId];
+
+    final conversation = Conversation(
+      conversationId: conversationId,
+      type: ConversationType.group,
+      otherUser: null,
+      group: group,
+      lastMessage: lastMessage ?? existing?.lastMessage,
+      unreadCount: existing?.unreadCount ?? 0,
+      lastActivity: lastMessage?.createdAt ?? existing?.lastActivity,
+    );
+
+    _conversations[conversationId] = conversation;
+
+    await _database.upsertConversation(ConversationsCompanion.insert(
+      conversationId: conversationId,
+      conversationType: conversationTypeToString(ConversationType.group),
+      otherUserId: const Value.absent(),
+      otherUsername: const Value.absent(),
+      otherFullName: const Value.absent(),
+      otherAvatar: const Value.absent(),
+      otherIsOnline: const Value.absent(),
+      groupId: Value(group.id),
+      groupName: Value(group.name),
+      groupIcon: Value(group.icon),
+      groupMemberCount: Value(group.memberCount),
+      lastMessageContent: Value(conversation.lastMessage?.content),
+      lastMessageTime: Value(conversation.lastMessage?.createdAt),
+      lastMessageCreatedAtUnix: Value(conversation.lastMessage?.createdAtUnix),
+      unreadCount: Value(conversation.unreadCount),
+      updatedAt: DateTime.now(),
+    ));
+
+    if (notify) {
+      notifyListeners();
     }
   }
 

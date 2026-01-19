@@ -106,6 +106,7 @@ class _GroupInviteJoinScreenState extends State<GroupInviteJoinScreen> {
   void _openGroupChat(Group group) {
     final conversationId = 'group_${group.id}';
     final provider = context.read<MessageProvider>();
+    provider.addOrUpdateGroupConversation(group, notify: false);
     provider.openConversation(conversationId);
     provider.loadMessages(conversationId);
 

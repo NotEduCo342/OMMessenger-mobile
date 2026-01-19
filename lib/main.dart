@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -23,16 +24,18 @@ void callbackDispatcher() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.instance.init();
-  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
-  await Workmanager().registerPeriodicTask(
-    'syncMessages',
-    'syncMessages',
-    frequency: const Duration(minutes: 15),
-    initialDelay: const Duration(minutes: 1),
-    constraints: Constraints(networkType: NetworkType.connected),
-    backoffPolicy: BackoffPolicy.exponential,
-    backoffPolicyDelay: const Duration(minutes: 5),
-  );
+  if (!Platform.isLinux) {
+    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+    await Workmanager().registerPeriodicTask(
+      'syncMessages',
+      'syncMessages',
+      frequency: const Duration(minutes: 15),
+      initialDelay: const Duration(minutes: 1),
+      constraints: Constraints(networkType: NetworkType.connected),
+      backoffPolicy: BackoffPolicy.exponential,
+      backoffPolicyDelay: const Duration(minutes: 5),
+    );
+  }
   runApp(const MyApp());
 }
 

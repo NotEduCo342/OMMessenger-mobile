@@ -5,6 +5,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import '../providers/auth_provider.dart';
 import '../providers/message_provider.dart';
 import '../models/conversation.dart';
+import '../models/group.dart';
 import '../services/websocket_service.dart';
 import '../services/notification_prefs.dart';
 import '../services/update_service.dart';
@@ -190,6 +191,26 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           const OfflineBanner(),
+          if (messageProvider.isRestoringPeers)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Restoring conversations…',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: conversations.isEmpty
                 ? Center(
@@ -479,10 +500,27 @@ class _HomeDrawer extends StatelessWidget {
               title: const Text('Create group'),
               onTap: () async {
                 Navigator.pop(context);
-                await Navigator.push(
+                final result = await Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const GroupCreateScreen()),
                 );
+                if (!context.mounted) return;
+                if (result is Group) {
+                  final provider = context.read<MessageProvider>();
+                  await provider.addOrUpdateGroupConversation(result, notify: false);
+                  provider.openConversation('group_${result.id}');
+                  provider.loadMessages('group_${result.id}');
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ChatScreen(
+                        conversationId: 'group_${result.id}',
+                        type: ConversationType.group,
+                        group: result,
+                      ),
+                    ),
+                  );
+                }
               },
             ),
             ListTile(

@@ -16,7 +16,13 @@ class NotificationService {
     if (_initialized) return;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const settings = InitializationSettings(android: androidSettings);
+    const linuxSettings = LinuxInitializationSettings(
+      defaultActionName: 'Open',
+    );
+    const settings = InitializationSettings(
+      android: androidSettings,
+      linux: linuxSettings,
+    );
     await _plugin.initialize(settings);
 
     if (Platform.isAndroid) {
