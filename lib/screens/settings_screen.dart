@@ -51,7 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _normalizedUsernameInput(String raw) {
     // Mirror backend normalization as closely as possible without duplicating
     // all validation logic.
-    return raw.trim().toLowerCase();
+	return raw.trim();
   }
 
   Future<void> _checkUsernameAvailability() async {
@@ -71,7 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     // If unchanged, treat as valid/available.
-    if (username == currentUser.username) {
+    if (username.toLowerCase() == currentUser.username.toLowerCase()) {
       setState(() {
         _isUsernameAvailable = true;
         _usernameErrorText = null;
@@ -123,12 +123,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final nextUsername = _normalizedUsernameInput(_usernameController.text);
 
     final changed = (nextFullName.isNotEmpty && nextFullName != user.fullName) ||
-        (nextUsername.isNotEmpty && nextUsername != user.username);
+      (nextUsername.isNotEmpty && nextUsername != user.username);
     if (!changed) return false;
 
     if (nextUsername.isEmpty) return false;
     if (_usernameErrorText != null) return false;
-    if (nextUsername != user.username && _isUsernameAvailable != true) return false;
+    if (nextUsername.toLowerCase() != user.username.toLowerCase() && _isUsernameAvailable != true) return false;
 
     return true;
   }
