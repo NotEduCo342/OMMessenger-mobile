@@ -8,6 +8,8 @@ import '../models/message.dart';
 import '../models/conversation.dart';
 import '../providers/message_provider.dart';
 import '../widgets/user_avatar.dart';
+import 'user_profile_screen.dart';
+import 'package:flutter/services.dart';
 import 'group_details_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -232,68 +234,81 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
-        title: Row(
-          children: [
-            Stack(
-              children: [
-                UserAvatar(
-                  username: isGroup
-                      ? (group?.name ?? 'Group')
-                      : (user?.username ?? 'User'),
-                  avatarUrl: isGroup ? (group?.icon ?? '') : (user?.avatar ?? ''),
-                  radius: 20,
-                ),
-                if (!isGroup && (user?.isOnline ?? false))
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Theme.of(context).appBarTheme.backgroundColor ?? Colors.white,
-                          width: 2,
+        title: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: (!isGroup && user != null)
+              ? () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => UserProfileScreen(user: user!),
+                    ),
+                  );
+                }
+              : null,
+          child: Row(
+            children: [
+              Stack(
+                children: [
+                  UserAvatar(
+                    username: isGroup
+                        ? (group?.name ?? 'Group')
+                        : (user?.username ?? 'User'),
+                    avatarUrl: isGroup ? (group?.icon ?? '') : (user?.avatar ?? ''),
+                    radius: 20,
+                  ),
+                  if (!isGroup && (user?.isOnline ?? false))
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).appBarTheme.backgroundColor ?? Colors.white,
+                            width: 2,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isGroup
-                        ? (group?.name ?? 'Group')
-                        : ((user?.fullName.isNotEmpty ?? false)
-                            ? user!.fullName
-                            : (user?.username ?? 'User')),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  if (!isGroup && isOtherUserTyping)
-                    const Text(
-                      'typing...',
-                      style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
-                    )
-                  else if (!isGroup && (user?.isOnline ?? false))
-                    const Text(
-                      'online',
-                      style: TextStyle(fontSize: 13),
-                    )
-                  else if (isGroup && group != null)
-                    Text(
-                      '${group.memberCount} members',
-                      style: const TextStyle(fontSize: 13),
-                    ),
                 ],
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isGroup
+                          ? (group?.name ?? 'Group')
+                          : ((user?.fullName.isNotEmpty ?? false)
+                              ? user!.fullName
+                              : (user?.username ?? 'User')),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (!isGroup && isOtherUserTyping)
+                      const Text(
+                        'typing...',
+                        style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+                      )
+                    else if (!isGroup && (user?.isOnline ?? false))
+                      const Text(
+                        'online',
+                        style: TextStyle(fontSize: 13),
+                      )
+                    else if (isGroup && group != null)
+                      Text(
+                        '${group.memberCount} members',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       body: Column(
@@ -505,81 +520,123 @@ class _MessageBubble extends StatelessWidget {
           constraints: BoxConstraints(
             maxWidth: MediaQuery.sizeOf(context).width * 0.78,
           ),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            margin: EdgeInsets.only(
-              left: isMe ? 48 : 0,
-              right: isMe ? 0 : 48,
+          child: InkWell(
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(18),
+              topRight: const Radius.circular(18),
+              bottomLeft: Radius.circular(isMe ? 18 : 6),
+              bottomRight: Radius.circular(isMe ? 6 : 18),
             ),
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(isMe ? 18 : 6),
-                bottomRight: Radius.circular(isMe ? 6 : 18),
+            onTap: () => _showMessageOptions(context),
+            onLongPress: () => _showMessageOptions(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              margin: EdgeInsets.only(
+                left: isMe ? 48 : 0,
+                right: isMe ? 0 : 48,
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    message.content,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: textColor,
-                    ),
-                  ),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(18),
+                  topRight: const Radius.circular(18),
+                  bottomLeft: Radius.circular(isMe ? 18 : 6),
+                  bottomRight: Radius.circular(isMe ? 6 : 18),
                 ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      timeText,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: metaColor,
-                      ),
-                    ),
-                    if (isMe) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        message.isRead
-                            ? Icons.done_all
-                            : message.isDelivered
-                                ? Icons.done_all
-                                : message.status == 'sent'
-                                    ? Icons.done
-                                    : Icons.schedule,
-                        size: 14,
-                        color: metaColor,
-                      ),
-                    ],
-                  ],
-                ),
-                if (isMe && readByLabel != null) ...[
-                  const SizedBox(height: 2),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
                   Align(
-                    alignment: Alignment.centerRight,
+                    alignment: Alignment.centerLeft,
                     child: Text(
-                      readByLabel!,
+                      message.content,
                       style: TextStyle(
-                        fontSize: 10,
-                        color: metaColor,
+                        fontSize: 16,
+                        color: textColor,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        timeText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: metaColor,
+                        ),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          message.isRead
+                              ? Icons.done_all
+                              : message.isDelivered
+                                  ? Icons.done_all
+                                  : message.status == 'sent'
+                                      ? Icons.done
+                                      : Icons.schedule,
+                          size: 14,
+                          color: metaColor,
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (isMe && readByLabel != null) ...[
+                    const SizedBox(height: 2),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        readByLabel!,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: metaColor,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  void _showMessageOptions(BuildContext context) {
+    if (message.content.trim().isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.copy),
+                title: const Text('Copy'),
+                onTap: () async {
+                  await Clipboard.setData(ClipboardData(text: message.content));
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                  }
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Message copied')),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
