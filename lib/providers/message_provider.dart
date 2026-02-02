@@ -188,6 +188,52 @@ class MessageProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> upsertGroupConversation(
+    Group group, {
+    Message? lastMessage,
+    int unreadCount = 0,
+    DateTime? lastActivity,
+  }) async {
+    final conversationId = _groupConversationId(group.id);
+    final existing = _conversations[conversationId];
+    final updated = Conversation(
+      conversationId: conversationId,
+      type: ConversationType.group,
+      group: group,
+      lastMessage: lastMessage ?? existing?.lastMessage,
+      unreadCount: existing?.unreadCount ?? unreadCount,
+      lastActivity: lastActivity ?? existing?.lastActivity,
+    );
+    _conversations[conversationId] = updated;
+
+    await _database.upsertConversation(ConversationsCompanion.insert(
+      conversationId: conversationId,
+      conversationType: conversationTypeToString(ConversationType.group),
+      otherUserId: const Value.absent(),
+      otherUsername: const Value.absent(),
+      otherFullName: const Value.absent(),
+      otherAvatar: const Value.absent(),
+      otherIsOnline: const Value.absent(),
+      groupId: Value(group.id),
+      groupName: Value(group.name),
+      groupIcon: Value(group.icon),
+      groupMemberCount: Value(group.memberCount),
+      lastMessageContent: Value(lastMessage?.content),
+      lastMessageTime: Value(lastMessage?.createdAt),
+      lastMessageCreatedAtUnix: Value(lastMessage?.createdAtUnix),
+      unreadCount: Value(unreadCount),
+      updatedAt: DateTime.now(),
+    ));
+
+    await NotificationPrefs.setConversationMeta(
+      conversationId,
+      title: group.name.isNotEmpty ? group.name : 'Group',
+      isGroup: true,
+    );
+
+    notifyListeners();
+  }
+
   Future<void> initialize(User currentUser) async {
     if (_isInitialized) return;
     

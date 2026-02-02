@@ -123,6 +123,84 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showStartMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('New chat'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const UserSearchScreen()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.group_add),
+                title: const Text('Create group'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const GroupCreateScreen()),
+                  );
+                  if (!context.mounted) return;
+                  if (result is Group) {
+                    final provider = context.read<MessageProvider>();
+                    await provider.addOrUpdateGroupConversation(result, notify: false);
+                    provider.openConversation('group_${result.id}');
+                    provider.loadMessages('group_${result.id}');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChatScreen(
+                          conversationId: 'group_${result.id}',
+                          type: ConversationType.group,
+                          group: result,
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.public),
+                title: const Text('Discover groups'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const GroupDiscoverScreen()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: const Text('Join by invite'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const GroupInviteJoinScreen()),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
@@ -254,13 +332,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const UserSearchScreen()),
-          );
-        },
-        child: const Icon(Icons.edit),
+        onPressed: _showStartMenu,
+        child: const Icon(Icons.add),
       ),
     );
   }
