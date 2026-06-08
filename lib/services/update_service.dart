@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../config/constants.dart';
@@ -15,23 +16,29 @@ class UpdateService {
       final currentVersion = packageInfo.version;
       final currentBuildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
 
+      final platform = Platform.isIOS ? 'ios' : 'android';
+
       // Call backend API to get latest version info
       final response = await http.get(
-        Uri.parse('${AppConstants.baseUrl}/version'),
+        Uri.parse('${AppConstants.baseUrl}/version/check?platform=$platform&build=$currentBuildNumber'),
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         
-        final latestVersion = data['version'] as String;
-        final latestBuildNumber = data['build_number'] as int;
-        final downloadUrl = data['download_url'] as String?;
+        final needsUpdate = data['needs_update'] as bool? ?? false;
         final isForceUpdate = data['force_update'] as bool? ?? false;
-        final changeLog = data['changelog'] as String?;
+        
+        final latestVersionInfo = data['latest_version'] as Map<String, dynamic>?;
+        if (latestVersionInfo == null) {
+          return _noUpdateResponse(currentVersion, currentBuildNumber);
+        }
 
-        // Compare build numbers (more reliable than version strings)
-        final needsUpdate = latestBuildNumber > currentBuildNumber;
+        final latestVersion = latestVersionInfo['version'] as String;
+        final latestBuildNumber = latestVersionInfo['build_number'] as int;
+        final downloadUrl = latestVersionInfo['download_url'] as String?;
+        final changeLog = latestVersionInfo['changelog'] as String?;
 
         return {
           'needsUpdate': needsUpdate,

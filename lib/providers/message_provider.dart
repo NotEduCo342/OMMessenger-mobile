@@ -1180,6 +1180,9 @@ class MessageProvider with ChangeNotifier {
       case 'typing':
         _handleTyping(data);
         break;
+      case 'user_status':
+        _handleUserStatus(data);
+        break;
       case 'batch':
         _handleBatchMessages(data);
         break;
@@ -1522,7 +1525,54 @@ class MessageProvider with ChangeNotifier {
     for (final msgData in messages) {
       if (msgData['type'] == 'message') {
         _handleIncomingMessage(msgData);
+      } else if (msgData['type'] == 'user_status') {
+        _handleUserStatus(msgData);
       }
+    }
+  }
+
+  void _handleUserStatus(Map<String, dynamic> data) async {
+    final userId = data['user_id'] as int?;
+    final isOnline = data['is_online'] as bool? ?? false;
+    
+    if (userId == null || userId == _currentUser?.id) return;
+    
+    final conversationId = _dmConversationId(userId);
+    final conv = _conversations[conversationId];
+    
+    if (conv != null && conv.otherUser != null) {
+      final updatedUser = User(
+        id: conv.otherUser!.id,
+        username: conv.otherUser!.username,
+        email: conv.otherUser!.email,
+        fullName: conv.otherUser!.fullName,
+        avatar: conv.otherUser!.avatar,
+        isOnline: isOnline,
+        lastSeen: conv.otherUser!.lastSeen,
+      );
+      final updatedConv = conv.copyWith(otherUser: updatedUser);
+      _conversations[conversationId] = updatedConv;
+      
+      await _database.upsertConversation(ConversationsCompanion.insert(
+        conversationId: conversationId,
+        conversationType: conversationTypeToString(ConversationType.dm),
+        otherUserId: Value(userId),
+        otherUsername: Value(updatedUser.username),
+        otherFullName: Value(updatedUser.fullName),
+        otherAvatar: Value(updatedUser.avatar),
+        otherIsOnline: Value(isOnline),
+        groupId: const Value.absent(),
+        groupName: const Value.absent(),
+        groupIcon: const Value.absent(),
+        groupMemberCount: const Value.absent(),
+        lastMessageContent: Value(updatedConv.lastMessage?.content),
+        lastMessageTime: Value(updatedConv.lastMessage?.createdAt),
+        lastMessageCreatedAtUnix: Value(updatedConv.lastMessage?.createdAtUnix),
+        unreadCount: Value(updatedConv.unreadCount),
+        updatedAt: DateTime.now(),
+      ));
+      
+      notifyListeners();
     }
   }
 
