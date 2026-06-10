@@ -212,6 +212,7 @@ class _GroupDiscoverScreenState extends State<GroupDiscoverScreen> {
               suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear),
+                      tooltip: 'Clear search',
                       onPressed: () {
                         _searchController.clear();
                         _searchPublicGroups('');
