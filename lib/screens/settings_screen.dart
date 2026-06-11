@@ -314,6 +314,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         shape: const CircleBorder(),
                         child: IconButton(
                           iconSize: 20,
+                          tooltip: 'Edit profile picture',
                           onPressed: user == null || _isUploadingAvatar
                               ? null
                               : _pickAndUploadAvatar,
@@ -324,7 +325,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Icon(Icons.photo_camera_outlined),
-                          tooltip: 'Change avatar',
                         ),
                       ),
                     ),
