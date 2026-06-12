@@ -217,6 +217,7 @@ class _GroupDiscoverScreenState extends State<GroupDiscoverScreen> {
                         _searchPublicGroups('');
                         setState(() {});
                       },
+                      tooltip: 'Clear search',
                     )
                   : null,
               filled: true,
