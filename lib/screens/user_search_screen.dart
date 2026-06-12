@@ -103,6 +103,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
                           _searchController.clear();
                           _searchUsers('');
                         },
+                        tooltip: 'Clear search',
                       )
                     : null,
                 filled: true,
