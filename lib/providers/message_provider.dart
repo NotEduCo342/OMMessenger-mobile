@@ -29,6 +29,7 @@ class MessageProvider with ChangeNotifier {
   final Map<String, Conversation> _conversations = {};
   final Map<String, Message> _pendingMessages = {};
   final Map<int, bool> _typingUsers = {};
+  final Map<String, Set<int>> _conversationTypingUsers = {}; // conversationId -> Set of userIds
   final Map<String, int?> _messageCursors = {}; // Track pagination cursor per conversation
   final Map<String, bool> _hasMoreMessages = {}; // Track if more messages exist
   final Set<int> _userFetchInFlight = {};
@@ -105,6 +106,7 @@ class MessageProvider with ChangeNotifier {
     _messagesByConversation.clear();
     _hasMoreMessages.clear();
     _typingUsers.clear();
+    _conversationTypingUsers.clear();
     _groupReadStates.clear();
     _groupMembers.clear();
     _pendingQueueCount = 0;
@@ -233,7 +235,10 @@ class MessageProvider with ChangeNotifier {
       groupId: Value(group.id),
       groupName: Value(group.name),
       groupIcon: Value(group.icon),
+      groupHandle: Value(group.handle),
       groupMemberCount: Value(group.memberCount),
+      groupIsPublic: Value(group.isPublic),
+      groupCreatorId: Value(group.creatorId),
       lastMessageContent: Value(lastMessage?.content),
       lastMessageType: Value(lastMessage?.messageType),
       lastMessageTime: Value(lastMessage?.createdAt),
@@ -345,6 +350,7 @@ class MessageProvider with ChangeNotifier {
                 icon: convo.groupIcon ?? '',
                 memberCount: convo.groupMemberCount ?? 0,
                 isPublic: convo.groupIsPublic ?? false,
+                handle: convo.groupHandle,
                 creatorId: convo.groupCreatorId ?? 0,
               )
             : null;
@@ -680,6 +686,7 @@ class MessageProvider with ChangeNotifier {
       groupId: Value(group.id),
       groupName: Value(group.name),
       groupIcon: Value(group.icon),
+      groupHandle: Value(group.handle),
       groupMemberCount: Value(group.memberCount),
       groupIsPublic: Value(group.isPublic),
       groupCreatorId: Value(group.creatorId),
@@ -789,6 +796,7 @@ class MessageProvider with ChangeNotifier {
           groupId: Value(group?.id),
           groupName: Value(group?.name),
           groupIcon: Value(group?.icon),
+          groupHandle: Value(group?.handle),
           groupMemberCount: Value(group?.memberCount),
           groupIsPublic: Value(group?.isPublic),
           groupCreatorId: Value(group?.creatorId),
@@ -1570,6 +1578,7 @@ class MessageProvider with ChangeNotifier {
         groupId: Value(group.id),
         groupName: Value(group.name),
         groupIcon: Value(group.icon),
+        groupHandle: Value(group.handle),
         groupMemberCount: Value(group.memberCount),
         groupIsPublic: Value(group.isPublic),
         groupCreatorId: Value(group.creatorId),
@@ -1643,16 +1652,32 @@ class MessageProvider with ChangeNotifier {
     
     final senderId = typingData['sender_id'] as int?;
     final isTyping = typingData['is_typing'] as bool? ?? false;
+    final conversationId = typingData['conversation_id'] as String? ?? 
+        (senderId != null ? _dmConversationId(senderId) : null);
 
-    if (senderId != null) {
-      _typingUsers[senderId] = isTyping;
+    if (senderId != null && conversationId != null) {
+      // Legacy DM support:
+      if (conversationId.startsWith('user_')) {
+        _typingUsers[senderId] = isTyping;
+      }
+
+      final set = _conversationTypingUsers.putIfAbsent(conversationId, () => {});
+      if (isTyping) {
+        set.add(senderId);
+      } else {
+        set.remove(senderId);
+      }
       notifyListeners();
 
       // Auto-clear typing indicator after 3 seconds
       if (isTyping) {
         Timer(const Duration(seconds: 3), () {
-          if (_typingUsers[senderId] == true) {
-            _typingUsers[senderId] = false;
+          final s = _conversationTypingUsers[conversationId];
+          if (s != null && s.contains(senderId)) {
+            s.remove(senderId);
+            if (conversationId.startsWith('user_')) {
+              _typingUsers[senderId] = false;
+            }
             notifyListeners();
           }
         });
@@ -1690,7 +1715,7 @@ class MessageProvider with ChangeNotifier {
       for (var i = 0; i < list.length; i++) {
         final m = list[i];
         if (m.senderId == currentUserId &&
-            m.recipientId == readerId &&
+            (m.recipientId == null || m.recipientId == readerId) &&
             m.id > 0 &&
             m.id <= lastRead &&
             !m.isRead) {
@@ -1826,15 +1851,40 @@ class MessageProvider with ChangeNotifier {
         final conv = _conversations[conversationId];
         if (conv?.group != null) {
           final g = conv!.group!;
-          _conversations[conversationId] = conv.copyWith(
-            group: Group(
-              id: g.id,
-              name: g.name,
-              icon: g.icon,
-              memberCount: members.length,
-              creatorId: g.creatorId,
-            ),
+          final updatedGroup = Group(
+            id: g.id,
+            name: g.name,
+            icon: g.icon,
+            memberCount: members.length,
+            description: g.description,
+            isPublic: g.isPublic,
+            handle: g.handle,
+            creatorId: g.creatorId,
           );
+          _conversations[conversationId] = conv.copyWith(group: updatedGroup);
+          await _database.upsertConversation(ConversationsCompanion.insert(
+            conversationId: conversationId,
+            conversationType: conversationTypeToString(ConversationType.group),
+            otherUserId: const Value.absent(),
+            otherUsername: const Value.absent(),
+            otherFullName: const Value.absent(),
+            otherAvatar: const Value.absent(),
+            otherIsOnline: const Value.absent(),
+            groupId: Value(updatedGroup.id),
+            groupName: Value(updatedGroup.name),
+            groupIcon: Value(updatedGroup.icon),
+            groupHandle: Value(updatedGroup.handle),
+            groupMemberCount: Value(updatedGroup.memberCount),
+            groupIsPublic: Value(updatedGroup.isPublic),
+            groupCreatorId: Value(updatedGroup.creatorId),
+            lastMessageContent: Value(conv.lastMessage?.content),
+            lastMessageType: Value(conv.lastMessage?.messageType),
+            lastMessageTime: Value(conv.lastMessage?.createdAt),
+            lastMessageCreatedAtUnix: Value(conv.lastMessage?.createdAtUnix),
+            unreadCount: Value(conv.unreadCount),
+            updatedAt: DateTime.now(),
+          ));
+          notifyListeners();
         }
       }
     } catch (_) {
@@ -2034,6 +2084,7 @@ class MessageProvider with ChangeNotifier {
       groupId: Value(conversation.group?.id),
       groupName: Value(conversation.group?.name),
       groupIcon: Value(conversation.group?.icon),
+      groupHandle: Value(conversation.group?.handle),
       groupMemberCount: Value(conversation.group?.memberCount),
       groupIsPublic: Value(conversation.group?.isPublic),
       groupCreatorId: Value(conversation.group?.creatorId),
@@ -2061,6 +2112,60 @@ class MessageProvider with ChangeNotifier {
 
   void sendTypingIndicator(int recipientId, bool isTyping) {
     _wsService.sendTyping(recipientId, isTyping);
+  }
+
+  void sendGroupTypingIndicator(int groupId, bool isTyping) {
+    _wsService.sendGroupTyping(groupId, isTyping);
+  }
+
+  Set<int> getTypingUserIds(String conversationId) {
+    return _conversationTypingUsers[conversationId] ?? const {};
+  }
+
+  List<String> getTypingUserNames(String conversationId) {
+    final typingIds = _conversationTypingUsers[conversationId];
+    if (typingIds == null || typingIds.isEmpty) return [];
+
+    final parsed = _parseConversationId(conversationId);
+    final isGroup = parsed.$1 == 'group';
+    final id = parsed.$2;
+
+    final names = <String>[];
+    for (final userId in typingIds) {
+      if (isGroup) {
+        final members = _groupMembers[id];
+        final member = members?[userId];
+        if (member != null) {
+          names.add(member.fullName.isNotEmpty ? member.fullName : member.username);
+          continue;
+        }
+      }
+      
+      final conv = _conversations[conversationId];
+      if (conv?.otherUser != null) {
+        final u = conv!.otherUser!;
+        names.add(u.fullName.isNotEmpty ? u.fullName : u.username);
+        continue;
+      }
+      names.add('User $userId');
+    }
+    return names;
+  }
+
+  String getTypingIndicatorText(String conversationId) {
+    final names = getTypingUserNames(conversationId);
+    if (names.isEmpty) return '';
+    if (names.length == 1) {
+      return '${names[0]} is typing...';
+    }
+    if (names.length == 2) {
+      return '${names[0]} and ${names[1]} are typing...';
+    }
+    if (names.length == 3) {
+      return '${names[0]}, ${names[1]} and ${names[2]} are typing...';
+    }
+    final countOthers = names.length - 2;
+    return '${names[0]} and ${names[1]} + $countOthers others are typing...';
   }
 
   void markAsRead(int messageId) {

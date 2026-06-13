@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration {
@@ -64,6 +64,10 @@ class AppDatabase extends _$AppDatabase {
         if (from < 8) {
           await customStatement('DROP TABLE IF EXISTS conversations;');
           await m.createTable(conversations);
+        }
+
+        if (from < 9) {
+          await m.addColumn(conversations, conversations.groupHandle);
         }
       },
     );
@@ -420,7 +424,7 @@ class AppDatabase extends _$AppDatabase {
     return (update(messages)
           ..where((m) => m.groupId.isNull())
           ..where((m) => m.senderId.equals(senderId))
-          ..where((m) => m.recipientId.equals(recipientId))
+          ..where((m) => m.recipientId.equals(recipientId) | m.recipientId.isNull())
           ..where((m) => m.serverId.isSmallerOrEqualValue(lastReadMessageId)))
         .write(MessagesCompanion(
           status: const Value('read'),
@@ -435,7 +439,7 @@ class AppDatabase extends _$AppDatabase {
     return (update(messages)
           ..where((m) => m.groupId.isNull())
           ..where((m) => m.senderId.equals(senderId))
-          ..where((m) => m.recipientId.equals(recipientId))
+          ..where((m) => m.recipientId.equals(recipientId) | m.recipientId.isNull())
           ..where((m) => m.serverId.isSmallerOrEqualValue(lastReadMessageId)))
         .write(MessagesCompanion(
           status: const Value('read'),

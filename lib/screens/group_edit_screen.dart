@@ -75,7 +75,7 @@ class _GroupEditScreenState extends State<GroupEditScreen> {
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       setState(() => _isCheckingHandle = true);
 
-      final isAvailable = await context.read<AuthProvider>().checkUsernameAvailability(handle);
+      final isAvailable = await GroupService().checkGroupHandleAvailability(handle, excludeGroupId: widget.group.id);
 
       if (mounted) {
         setState(() {

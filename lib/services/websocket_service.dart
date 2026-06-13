@@ -271,6 +271,14 @@ class WebSocketService {
     });
   }
 
+  void sendGroupTyping(int groupId, bool isTyping) {
+    send({
+      'type': 'typing',
+      'group_id': groupId,
+      'is_typing': isTyping,
+    });
+  }
+
   void sendRead(int messageId) {
     send({
       'type': 'read',

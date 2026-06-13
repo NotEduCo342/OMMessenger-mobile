@@ -50,6 +50,7 @@ class Conversations extends Table {
   IntColumn get groupId => integer().nullable()();
   TextColumn get groupName => text().nullable()();
   TextColumn get groupIcon => text().nullable()();
+  TextColumn get groupHandle => text().nullable()();
   IntColumn get groupMemberCount => integer().nullable()();
   BoolColumn get groupIsPublic => boolean().nullable()();
   IntColumn get groupCreatorId => integer().nullable()();

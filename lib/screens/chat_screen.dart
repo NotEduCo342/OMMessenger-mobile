@@ -150,7 +150,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onTextChanged(String text) {
-    if (widget.type == ConversationType.group) return;
+    if (widget.type == ConversationType.group) {
+      final groupId = _getGroupId(context);
+      if (groupId == null) return;
+
+      if (text.isNotEmpty && !_isTyping) {
+        _isTyping = true;
+        context.read<MessageProvider>().sendGroupTypingIndicator(groupId, true);
+      }
+
+      _typingTimer?.cancel();
+      _typingTimer = Timer(const Duration(seconds: 2), () {
+        if (_isTyping) {
+          _isTyping = false;
+          final groupId = _getGroupId(context);
+          if (groupId != null) {
+            context.read<MessageProvider>().sendGroupTypingIndicator(groupId, false);
+          }
+        }
+      });
+      return;
+    }
+
     final recipientId = _getDmRecipientId(context);
     if (recipientId == null) return;
 
@@ -201,7 +222,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (_isTyping) {
       _isTyping = false;
-      if (widget.type == ConversationType.dm) {
+      if (widget.type == ConversationType.group) {
+        final groupId = _getGroupId(context);
+        if (groupId != null) {
+          context.read<MessageProvider>().sendGroupTypingIndicator(groupId, false);
+        }
+      } else {
         final recipientId = _getDmRecipientId(context);
         if (recipientId != null) {
           context.read<MessageProvider>().sendTypingIndicator(recipientId, false);
@@ -403,7 +429,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     if (!isSelf) ...[
-                      if (!isGroup && isOtherUserTyping)
+                      if (isGroup && messageProvider.getTypingUserIds(widget.conversationId).isNotEmpty)
+                        Text(
+                          messageProvider.getTypingIndicatorText(widget.conversationId),
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontStyle: FontStyle.italic,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        )
+                      else if (!isGroup && isOtherUserTyping)
                         const Text(
                           'typing...',
                           style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
@@ -815,170 +850,222 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
 
     final isRtl = Bidi.detectRtlDirectionality(message.content);
 
+    final messageProvider = context.watch<MessageProvider>();
+    final showSenderInfo = message.groupId != null && !isMe;
+
+    User? senderUser;
+    if (showSenderInfo) {
+      final members = messageProvider.getGroupMembers(message.groupId!);
+      senderUser = members[message.senderId] ?? message.sender;
+    }
+
+    Color getSenderColor(String username, bool isDark) {
+      final hash = username.hashCode;
+      final double hue = (hash.abs() % 360).toDouble();
+      return HSLColor.fromAHSL(
+        1.0,
+        hue,
+        0.75,
+        isDark ? 0.7 : 0.4,
+      ).toColor();
+    }
+
     return SizeTransition(
       sizeFactor: _shredAnimation,
       axisAlignment: isMe ? 1.0 : -1.0,
       child: FadeTransition(
         opacity: _shredAnimation,
         child: Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-      child: Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.sizeOf(context).width * 0.78,
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(18),
-              topRight: const Radius.circular(18),
-              bottomLeft: Radius.circular(isMe ? 18 : 6),
-              bottomRight: Radius.circular(isMe ? 6 : 18),
-            ),
-            onTap: () {
-              if (message.messageType == 'image') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ImageViewerScreen(imageUrl: message.content),
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Align(
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: Row(
+              mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (showSenderInfo) ...[
+                  UserAvatar(
+                    username: senderUser?.fullName.isNotEmpty == true
+                        ? senderUser!.fullName
+                        : (senderUser?.username ?? 'User'),
+                    avatarUrl: senderUser?.avatar ?? '',
+                    radius: 16,
                   ),
-                );
-              }
-            },
-            onSecondaryTap: () => _showMessageOptions(context),
-            onLongPress: () => _showMessageOptions(context),
-            child: Container(
-              padding: const EdgeInsets.only(left: 12, right: 12, top: 8, bottom: 6),
-              margin: EdgeInsets.only(
-                left: isMe ? 48 : 0,
-                right: isMe ? 0 : 48,
-              ),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(18),
-                  topRight: const Radius.circular(18),
-                  bottomLeft: Radius.circular(isMe ? 18 : 6),
-                  bottomRight: Radius.circular(isMe ? 6 : 18),
-                ),
-              ),
-              child: IntrinsicWidth(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                      if (message.replyToId != null && message.replyToMessageContent != null) ...[
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          margin: const EdgeInsets.only(bottom: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border(
-                              left: BorderSide(
-                                color: isMe ? Colors.white : Theme.of(context).colorScheme.primary,
-                                width: 3,
-                              ),
-                            ),
-                          ),
-                          child: Text(
-                            message.replyToMessageContent!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: textColor.withOpacity(0.9),
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (message.messageType == 'image')
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: math.min(600.0, MediaQuery.sizeOf(context).width * 0.6),
-                            maxHeight: math.min(600.0, MediaQuery.sizeOf(context).height * 0.6),
-                          ),
-                          child: AuthImage(
-                            imageUrl: message.content,
-                            fit: BoxFit.cover,
-                            errorWidget: const Icon(Icons.broken_image, size: 100),
-                          ),
-                        ),
-                      )
-                    else
-                      Directionality(
-                        textDirection: isRtl ? ui.TextDirection.rtl : ui.TextDirection.ltr,
-                        child: Text(
-                          message.content,
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: textColor,
-                          ),
-                          textAlign: isRtl ? TextAlign.right : TextAlign.left,
-                        ),
-                      ),
-                    const SizedBox(height: 2),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (message.version != null && message.version! > 1) ...[
-                          Text(
-                            '(edited) ',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: metaColor.withOpacity(0.8),
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                        ],
-                        Text(
-                          timeText,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: metaColor,
-                          ),
-                        ),
-                        if (isMe) ...[
-                          const SizedBox(width: 4),
-                          Icon(
-                            message.isRead
-                                ? Icons.done_all
-                                : message.isDelivered
-                                    ? Icons.done_all
-                                    : message.status == 'sent'
-                                        ? Icons.done
-                                        : Icons.schedule,
-                            size: 14,
-                            color: metaColor,
-                          ),
-                        ],
-                      ],
+                  const SizedBox(width: 8),
+                ],
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * (showSenderInfo ? 0.70 : 0.78),
+                  ),
+                  child: InkWell(
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: Radius.circular(isMe ? 18 : 6),
+                      bottomRight: Radius.circular(isMe ? 6 : 18),
                     ),
-                    if (isMe && readByLabel != null) ...[
-                      const SizedBox(height: 2),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          readByLabel!,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: metaColor,
+                    onTap: () {
+                      if (message.messageType == 'image') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ImageViewerScreen(imageUrl: message.content),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        );
+                      }
+                    },
+                    onSecondaryTap: () => _showMessageOptions(context),
+                    onLongPress: () => _showMessageOptions(context),
+                    child: Container(
+                      padding: const EdgeInsets.only(left: 12, right: 12, top: 8, bottom: 6),
+                      margin: EdgeInsets.only(
+                        left: isMe ? 48 : 0,
+                        right: isMe ? 0 : 48,
+                      ),
+                      decoration: BoxDecoration(
+                        color: bubbleColor,
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(18),
+                          topRight: const Radius.circular(18),
+                          bottomLeft: Radius.circular(isMe ? 18 : 6),
+                          bottomRight: Radius.circular(isMe ? 6 : 18),
                         ),
                       ),
-                    ],
-                  ],
+                      child: IntrinsicWidth(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (showSenderInfo) ...[
+                              Text(
+                                senderUser?.fullName.isNotEmpty == true
+                                    ? senderUser!.fullName
+                                    : (senderUser?.username ?? 'User'),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: getSenderColor(
+                                    senderUser?.username ?? 'User',
+                                    Theme.of(context).brightness == Brightness.dark,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                            ],
+                            if (message.replyToId != null && message.replyToMessageContent != null) ...[
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                margin: const EdgeInsets.only(bottom: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border(
+                                    left: BorderSide(
+                                      color: isMe ? Colors.white : Theme.of(context).colorScheme.primary,
+                                      width: 3,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  message.replyToMessageContent!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: textColor.withOpacity(0.9),
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (message.messageType == 'image')
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: math.min(600.0, MediaQuery.sizeOf(context).width * 0.6),
+                                    maxHeight: math.min(600.0, MediaQuery.sizeOf(context).height * 0.6),
+                                  ),
+                                  child: AuthImage(
+                                    imageUrl: message.content,
+                                    fit: BoxFit.cover,
+                                    errorWidget: const Icon(Icons.broken_image, size: 100),
+                                  ),
+                                ),
+                              )
+                            else
+                              Directionality(
+                                textDirection: isRtl ? ui.TextDirection.rtl : ui.TextDirection.ltr,
+                                child: Text(
+                                  message.content,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: textColor,
+                                  ),
+                                  textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                                ),
+                              ),
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (message.version > 1) ...[
+                                  Text(
+                                    '(edited) ',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: metaColor.withOpacity(0.8),
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                                Text(
+                                  timeText,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: metaColor,
+                                  ),
+                                ),
+                                if (isMe) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    message.isRead
+                                        ? Icons.done_all
+                                        : message.isDelivered
+                                            ? Icons.done_all
+                                            : message.status == 'sent'
+                                                ? Icons.done
+                                                : Icons.schedule,
+                                    size: 14,
+                                    color: metaColor,
+                                  ),
+                                ],
+                              ],
+                            ),
+                            if (isMe && readByLabel != null) ...[
+                              const SizedBox(height: 2),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  readByLabel,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: metaColor,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
-      ),
-      ),
       ),
     );
   }

@@ -145,4 +145,16 @@ class GroupService {
     }
     throw Exception('Failed to upload group avatar');
   }
+
+  Future<bool> checkGroupHandleAvailability(String handle, {int? excludeGroupId}) async {
+    try {
+      final query = excludeGroupId != null
+          ? 'handle=${Uri.encodeComponent(handle)}&exclude_group_id=$excludeGroupId'
+          : 'handle=${Uri.encodeComponent(handle)}';
+      final response = await _api.get('/groups/check-handle?$query');
+      return response['available'] ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
 }
