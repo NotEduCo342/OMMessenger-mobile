@@ -523,6 +523,8 @@ class MessageProvider with ChangeNotifier {
         createdAtUnix: Value(message.createdAtUnix),
         updatedAt: message.createdAt,
         isSentByMe: message.senderId == _currentUser?.id,
+        replyToId: Value(message.replyToId),
+        replyToMessageContent: Value(message.replyToMessageContent),
       ));
 
       final list = _messagesByConversation[conversationId];
@@ -872,6 +874,22 @@ class MessageProvider with ChangeNotifier {
                         (dbMsg.createdAt.isUtc
                             ? (dbMsg.createdAt.millisecondsSinceEpoch ~/ 1000)
                             : (dbMsg.createdAt.toUtc().millisecondsSinceEpoch ~/ 1000)),
+                    version: dbMsg.version,
+                    replyToId: dbMsg.replyToId,
+                    replyTo: dbMsg.replyToId != null
+                        ? Message(
+                            id: dbMsg.replyToId!,
+                            clientId: '',
+                            senderId: 0,
+                            content: dbMsg.replyToMessageContent ?? '',
+                            messageType: 'text',
+                            status: 'sent',
+                            isDelivered: true,
+                            isRead: true,
+                            createdAt: DateTime.now().toUtc(),
+                            createdAtUnix: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+                          )
+                        : null,
                   ))
               .toList();
           // ChatScreen uses ListView(reverse:true). For that, our in-memory list
@@ -936,6 +954,8 @@ class MessageProvider with ChangeNotifier {
             createdAtUnix: Value(msg.createdAtUnix),
             updatedAt: msg.createdAt,
             isSentByMe: msg.senderId == _currentUser?.id,
+            replyToId: Value(msg.replyToId),
+            replyToMessageContent: Value(msg.replyToMessageContent),
           ));
         }
 
@@ -1240,6 +1260,8 @@ class MessageProvider with ChangeNotifier {
         updatedAt: DateTime.now().toUtc(),
         isSentByMe: true,
         version: Value(updatedMessage.version),
+        replyToId: Value(updatedMessage.replyToId),
+        replyToMessageContent: Value(updatedMessage.replyToMessageContent),
       ));
 
       // Update in memory
@@ -1381,6 +1403,8 @@ class MessageProvider with ChangeNotifier {
       updatedAt: DateTime.now().toUtc(),
       isSentByMe: updatedMessage.senderId == _currentUser?.id,
       version: Value(updatedMessage.version),
+      replyToId: Value(updatedMessage.replyToId),
+      replyToMessageContent: Value(updatedMessage.replyToMessageContent),
     ));
 
     // Update in memory
@@ -1561,6 +1585,8 @@ class MessageProvider with ChangeNotifier {
       createdAtUnix: Value(message.createdAtUnix),
       updatedAt: message.createdAt,
       isSentByMe: false,
+      replyToId: Value(message.replyToId),
+      replyToMessageContent: Value(message.replyToMessageContent),
     ));
 
     // Update conversation in database
