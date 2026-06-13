@@ -6,6 +6,7 @@ class Group {
   final String? description;
   final bool isPublic;
   final String? handle;
+  final int creatorId;
 
   const Group({
     required this.id,
@@ -15,6 +16,7 @@ class Group {
     this.description,
     this.isPublic = false,
     this.handle,
+    required this.creatorId,
   });
 
   factory Group.fromJson(Map<String, dynamic> json) {
@@ -26,6 +28,7 @@ class Group {
       description: json['description'] as String?,
       isPublic: json['is_public'] as bool? ?? false,
       handle: json['handle'] as String?,
+      creatorId: json['creator_id'] as int? ?? 0,
     );
   }
 }

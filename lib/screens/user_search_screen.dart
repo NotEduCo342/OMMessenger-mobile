@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../models/conversation.dart';
+import '../providers/auth_provider.dart';
 import '../providers/message_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/user_avatar.dart';
+import '../models/group.dart';
 import 'chat_screen.dart';
+import 'group_create_screen.dart';
+import 'group_discover_screen.dart';
+import 'group_invite_join_screen.dart';
 
 class UserSearchScreen extends StatefulWidget {
   const UserSearchScreen({super.key});
@@ -29,7 +34,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
   }
 
   Future<void> _searchUsers(String query) async {
-    if (query.trim().isEmpty) {
+    if (query.trim().length < 3) {
       setState(() {
         _searchResults = [];
         _errorMessage = null;
@@ -159,31 +164,67 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
     }
 
     if (_searchController.text.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.people_outline,
-              size: 80,
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Search for users',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+      return ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.group_add),
+            title: const Text('Create group'),
+            onTap: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const GroupCreateScreen()),
+              );
+              if (!context.mounted) return;
+              if (result is Group) {
+                final provider = context.read<MessageProvider>();
+                await provider.addOrUpdateGroupConversation(result);
+                provider.openConversation('group_${result.id}');
+                provider.loadMessages('group_${result.id}');
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChatScreen(
+                      conversationId: 'group_${result.id}',
+                      type: ConversationType.group,
+                      group: result,
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.public),
+            title: const Text('Discover groups'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const GroupDiscoverScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.link),
+            title: const Text('Join by invite'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const GroupInviteJoinScreen()),
+              );
+            },
+          ),
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(
+              'Enter at least 3 characters to find people',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                   ),
+              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Type a username or name to find people',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                  ),
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     }
 
@@ -216,47 +257,62 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
       );
     }
 
+    final currentUser = context.watch<AuthProvider>().user;
+
     return ListView.builder(
       itemCount: _searchResults.length,
       itemBuilder: (context, index) {
         final user = _searchResults[index];
+        final isSelf = currentUser != null && user.id == currentUser.id;
+
         return ListTile(
-          leading: Stack(
-            children: [
-              UserAvatar(
-                username: user.username,
-                avatarUrl: user.avatar,
-                radius: 24,
-              ),
-              if (user.isOnline)
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        width: 2,
-                      ),
-                    ),
+          leading: isSelf
+              ? CircleAvatar(
+                  radius: 24,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  child: Icon(
+                    Icons.bookmark,
+                    color: Theme.of(context).colorScheme.onPrimary,
                   ),
+                )
+              : Stack(
+                  children: [
+                    UserAvatar(
+                      username: user.username,
+                      avatarUrl: user.avatar,
+                      radius: 24,
+                    ),
+                    if (user.isOnline)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Theme.of(context).scaffoldBackgroundColor,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-            ],
-          ),
           title: Text(
-            user.fullName.isNotEmpty ? user.fullName : user.username,
+            isSelf ? 'Saved Messages' : (user.fullName.isNotEmpty ? user.fullName : user.username),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          subtitle: Text(
-            '@${user.username}',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-            ),
-          ),
+          subtitle: isSelf
+              ? null
+              : Text(
+                  '@${user.username}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
           trailing: Icon(
             Icons.arrow_forward_ios,
             size: 16,

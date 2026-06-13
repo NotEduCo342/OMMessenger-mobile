@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.ommessenger.om_mobile"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -26,7 +26,7 @@ android {
     defaultConfig {
         applicationId = "com.ommessenger.om_mobile"
         // minSdk 23 = Android 6.0 (2015) - Required for modern security features
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

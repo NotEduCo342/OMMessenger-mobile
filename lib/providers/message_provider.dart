@@ -99,6 +99,21 @@ class MessageProvider with ChangeNotifier {
     return readers;
   }
 
+  Future<void> clearDatabase() async {
+    await _database.clearAllData();
+    _conversations.clear();
+    _messagesByConversation.clear();
+    _hasMoreMessages.clear();
+    _typingUsers.clear();
+    _groupReadStates.clear();
+    _groupMembers.clear();
+    _pendingQueueCount = 0;
+    _isInitialized = false;
+    _currentUser = null;
+    _wsService.disconnect();
+    notifyListeners();
+  }
+
   (String kind, int id) _parseConversationId(String conversationId) {
     if (conversationId.startsWith('user_')) {
       return ('user', int.parse(conversationId.substring(5)));
@@ -180,6 +195,7 @@ class MessageProvider with ChangeNotifier {
       groupIcon: const Value.absent(),
       groupMemberCount: const Value.absent(),
       lastMessageContent: Value(existing?.lastMessage?.content),
+      lastMessageType: Value(existing?.lastMessage?.messageType),
       lastMessageTime: Value(existing?.lastMessage?.createdAt),
       lastMessageCreatedAtUnix: Value(existing?.lastMessage?.createdAtUnix),
       updatedAt: DateTime.now(),
@@ -219,6 +235,7 @@ class MessageProvider with ChangeNotifier {
       groupIcon: Value(group.icon),
       groupMemberCount: Value(group.memberCount),
       lastMessageContent: Value(lastMessage?.content),
+      lastMessageType: Value(lastMessage?.messageType),
       lastMessageTime: Value(lastMessage?.createdAt),
       lastMessageCreatedAtUnix: Value(lastMessage?.createdAtUnix),
       unreadCount: Value(unreadCount),
@@ -327,6 +344,8 @@ class MessageProvider with ChangeNotifier {
                 name: convo.groupName ?? 'Group ${convo.groupId}',
                 icon: convo.groupIcon ?? '',
                 memberCount: convo.groupMemberCount ?? 0,
+                isPublic: convo.groupIsPublic ?? false,
+                creatorId: convo.groupCreatorId ?? 0,
               )
             : null;
 
@@ -343,7 +362,7 @@ class MessageProvider with ChangeNotifier {
             recipientId: type == ConversationType.dm ? _currentUser?.id : null,
             groupId: type == ConversationType.group ? group?.id : null,
             content: convo.lastMessageContent!,
-            messageType: 'text',
+            messageType: convo.lastMessageType ?? 'text',
             status: 'delivered',
             isDelivered: true,
             isRead: true,
@@ -608,6 +627,7 @@ class MessageProvider with ChangeNotifier {
           groupIcon: const Value.absent(),
           groupMemberCount: const Value.absent(),
           lastMessageContent: Value(convo.lastMessage?.content),
+          lastMessageType: Value(convo.lastMessage?.messageType),
           lastMessageTime: Value(convo.lastMessage?.createdAt),
           lastMessageCreatedAtUnix: Value(convo.lastMessage?.createdAtUnix),
           unreadCount: Value(convo.unreadCount),
@@ -661,7 +681,10 @@ class MessageProvider with ChangeNotifier {
       groupName: Value(group.name),
       groupIcon: Value(group.icon),
       groupMemberCount: Value(group.memberCount),
+      groupIsPublic: Value(group.isPublic),
+      groupCreatorId: Value(group.creatorId),
       lastMessageContent: Value(conversation.lastMessage?.content),
+      lastMessageType: Value(conversation.lastMessage?.messageType),
       lastMessageTime: Value(conversation.lastMessage?.createdAt),
       lastMessageCreatedAtUnix: Value(conversation.lastMessage?.createdAtUnix),
       unreadCount: Value(conversation.unreadCount),
@@ -767,7 +790,10 @@ class MessageProvider with ChangeNotifier {
           groupName: Value(group?.name),
           groupIcon: Value(group?.icon),
           groupMemberCount: Value(group?.memberCount),
+          groupIsPublic: Value(group?.isPublic),
+          groupCreatorId: Value(group?.creatorId),
           lastMessageContent: Value(lastMessage?.content),
+          lastMessageType: Value(lastMessage?.messageType),
           lastMessageTime: Value(lastMessage?.createdAt),
           lastMessageCreatedAtUnix: Value(lastMessage?.createdAtUnix),
           unreadCount: Value(unreadCount),
@@ -905,6 +931,23 @@ class MessageProvider with ChangeNotifier {
           ));
         }
 
+        // Hard sync local database with server response to clean up deleted messages
+        if (!loadMore && cursor == null) {
+          // If we fetched the latest messages
+          if (messages.isNotEmpty) {
+            final fetchedIds = messages.map((m) => m.id).toList();
+            final minId = fetchedIds.reduce((curr, next) => curr < next ? curr : next);
+            await _database.deleteMessagesInRangeNotIncluded(
+              conversationId,
+              minId,
+              fetchedIds,
+            );
+          } else {
+            // Chat is completely empty on the server
+            await _database.deleteAllServerMessagesForConversation(conversationId);
+          }
+        }
+
         if (loadMore) {
           // Load-more returns older messages. With newest-first ordering, append older
           // items to the end of the list.
@@ -1010,31 +1053,32 @@ class MessageProvider with ChangeNotifier {
     }
   }
 
-  void sendMessage(int recipientId, String content) async {
+  void sendMessage(int recipientId, String content, {String messageType = 'text', Message? replyToMessage}) async {
     // Backward-compatible DM entry point
-    await sendDmMessage(recipientId, content);
+    await sendDmMessage(recipientId, content, messageType: messageType, replyToMessage: replyToMessage);
   }
 
-  Future<void> sendDmMessage(int recipientId, String content) async {
+  Future<void> sendDmMessage(int recipientId, String content, {String messageType = 'text', Message? replyToMessage}) async {
     if (_currentUser == null) return;
 
     final clientId = _uuid.v4();
     final now = DateTime.now().toUtc();
     final nowUnix = now.millisecondsSinceEpoch ~/ 1000;
 
-    // Create optimistic message
+    // Optimistic message
     final message = Message(
-      id: 0, // Temporary ID
+      id: 0,
       clientId: clientId,
       senderId: _currentUser!.id,
       sender: _currentUser,
       recipientId: recipientId,
-      groupId: null,
       content: content,
-      messageType: 'text',
+      messageType: messageType,
       status: 'pending',
       isDelivered: false,
       isRead: false,
+      replyToId: replyToMessage?.id,
+      replyTo: replyToMessage,
       createdAt: now,
       createdAtUnix: nowUnix,
     );
@@ -1045,12 +1089,14 @@ class MessageProvider with ChangeNotifier {
       senderId: _currentUser!.id,
       recipientId: Value(recipientId),
       content: content,
-      messageType: const Value('text'),
       status: const Value('pending'),
+      messageType: Value(messageType),
       createdAt: now,
       createdAtUnix: Value(nowUnix),
       updatedAt: now,
       isSentByMe: true,
+      replyToId: Value(replyToMessage?.id),
+      replyToMessageContent: Value(replyToMessage?.content),
     ));
 
     final conversationId = _dmConversationId(recipientId);
@@ -1073,7 +1119,8 @@ class MessageProvider with ChangeNotifier {
       clientId: clientId,
       recipientId: recipientId,
       content: content,
-      messageType: 'text',
+      messageType: messageType,
+      replyToId: replyToMessage?.id,
     );
     await _updateQueueCount();
 
@@ -1084,7 +1131,8 @@ class MessageProvider with ChangeNotifier {
           clientId: clientId,
           recipientId: recipientId,
           content: content,
-          messageType: 'text',
+          messageType: messageType,
+          replyToId: replyToMessage?.id,
         );
       } catch (_) {
         // Ignore: queued retry will handle it.
@@ -1092,7 +1140,7 @@ class MessageProvider with ChangeNotifier {
     }
   }
 
-  Future<void> sendGroupMessage(int groupId, String content) async {
+  Future<void> sendGroupMessage(int groupId, String content, {String messageType = 'text', Message? replyToMessage}) async {
     if (_currentUser == null) return;
 
     final clientId = _uuid.v4();
@@ -1105,13 +1153,14 @@ class MessageProvider with ChangeNotifier {
       clientId: clientId,
       senderId: _currentUser!.id,
       sender: _currentUser,
-      recipientId: null,
       groupId: groupId,
       content: content,
-      messageType: 'text',
+      messageType: messageType,
       status: 'pending',
       isDelivered: false,
       isRead: false,
+      replyToId: replyToMessage?.id,
+      replyTo: replyToMessage,
       createdAt: now,
       createdAtUnix: nowUnix,
     );
@@ -1119,15 +1168,16 @@ class MessageProvider with ChangeNotifier {
     await _database.insertMessage(MessagesCompanion.insert(
       clientId: clientId,
       senderId: _currentUser!.id,
-      recipientId: const Value.absent(),
       groupId: Value(groupId),
       content: content,
-      messageType: const Value('text'),
       status: const Value('pending'),
+      messageType: Value(messageType),
       createdAt: now,
       createdAtUnix: Value(nowUnix),
       updatedAt: now,
       isSentByMe: true,
+      replyToId: Value(replyToMessage?.id),
+      replyToMessageContent: Value(replyToMessage?.content),
     ));
 
     final messageList = _messagesByConversation.putIfAbsent(conversationId, () => []);
@@ -1143,7 +1193,8 @@ class MessageProvider with ChangeNotifier {
       clientId: clientId,
       groupId: groupId,
       content: content,
-      messageType: 'text',
+      messageType: messageType,
+      replyToId: replyToMessage?.id,
     );
     await _updateQueueCount();
 
@@ -1153,11 +1204,87 @@ class MessageProvider with ChangeNotifier {
           clientId: clientId,
           groupId: groupId,
           content: content,
-          messageType: 'text',
+          messageType: messageType,
+          replyToId: replyToMessage?.id,
         );
       } catch (_) {
         // Ignore: queued retry will handle it.
       }
+    }
+  }
+
+  Future<void> editMessage(int messageId, String newContent, String conversationId) async {
+    try {
+      final updatedMessage = await _apiService.editMessage(messageId, newContent);
+      
+      // Update DB
+      await _database.insertMessage(MessagesCompanion.insert(
+        id: Value(updatedMessage.id),
+        clientId: updatedMessage.clientId,
+        senderId: updatedMessage.senderId,
+        recipientId: Value(updatedMessage.recipientId),
+        groupId: Value(updatedMessage.groupId),
+        content: updatedMessage.content,
+        messageType: Value(updatedMessage.messageType),
+        status: Value(updatedMessage.status),
+        createdAt: updatedMessage.createdAt,
+        createdAtUnix: Value(updatedMessage.createdAtUnix),
+        updatedAt: DateTime.now().toUtc(),
+        isSentByMe: true,
+        version: Value(updatedMessage.version),
+      ));
+
+      // Update in memory
+      final messageList = _messagesByConversation[conversationId];
+      if (messageList != null) {
+        final index = messageList.indexWhere((m) => m.id == messageId);
+        if (index != -1) {
+          messageList[index] = updatedMessage;
+          _updateConversationWithMessage(conversationId, updatedMessage);
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      print('Error editing message: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteMessage(int messageId, String conversationId) async {
+    try {
+      await _apiService.deleteMessage(messageId);
+      
+      // Update DB to clear content but we still want to keep the record? 
+      // The user wants hard delete. So delete from DB.
+      await _database.deleteMessage(messageId);
+
+      // Update in memory
+      final messageList = _messagesByConversation[conversationId];
+      if (messageList != null) {
+        messageList.removeWhere((m) => m.id == messageId);
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error deleting message: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteConversation(String conversationId, {required bool everyone}) async {
+    try {
+      await _apiService.deleteConversation(conversationId, everyone);
+      
+      // Delete from local DB
+      await _database.deleteConversation(conversationId);
+      await _database.deleteAllMessagesForConversation(conversationId);
+      
+      // Update in memory
+      _messagesByConversation.remove(conversationId);
+      _conversations.remove(conversationId);
+      notifyListeners();
+    } catch (e) {
+      print('Error deleting conversation: $e');
+      rethrow;
     }
   }
 
@@ -1186,6 +1313,15 @@ class MessageProvider with ChangeNotifier {
       case 'batch':
         _handleBatchMessages(data);
         break;
+      case 'message_edit':
+        _handleMessageEdit(data);
+        break;
+      case 'message_delete':
+        _handleMessageDelete(data);
+        break;
+      case 'conversation_delete':
+        _handleConversationDelete(data);
+        break;
       case 'pong':
         // Pong received - connection healthy
         break;
@@ -1202,6 +1338,95 @@ class MessageProvider with ChangeNotifier {
     final message = (data['error'] as String?) ?? (data['message'] as String?);
     final details = data['details'] as String?;
     print('⚠️ Server error: $code - $message ${details != null ? '($details)' : ''}');
+  }
+
+  void _handleMessageEdit(Map<String, dynamic> data) async {
+    final messageData = data['message'] as Map<String, dynamic>?;
+    if (messageData == null) return;
+
+    final updatedMessage = Message.fromJson(messageData);
+    
+    // Determine conversation ID
+    String conversationId;
+    if (updatedMessage.groupId != null) {
+      conversationId = _groupConversationId(updatedMessage.groupId!);
+    } else {
+      final peerId = updatedMessage.senderId == _currentUser?.id 
+        ? updatedMessage.recipientId 
+        : updatedMessage.senderId;
+      if (peerId == null) return;
+      conversationId = _dmConversationId(peerId);
+    }
+
+    // Update DB
+    await _database.insertMessage(MessagesCompanion.insert(
+      id: Value(updatedMessage.id),
+      clientId: updatedMessage.clientId,
+      senderId: updatedMessage.senderId,
+      recipientId: Value(updatedMessage.recipientId),
+      groupId: Value(updatedMessage.groupId),
+      content: updatedMessage.content,
+      messageType: Value(updatedMessage.messageType),
+      status: Value(updatedMessage.status),
+      createdAt: updatedMessage.createdAt,
+      createdAtUnix: Value(updatedMessage.createdAtUnix),
+      updatedAt: DateTime.now().toUtc(),
+      isSentByMe: updatedMessage.senderId == _currentUser?.id,
+      version: Value(updatedMessage.version),
+    ));
+
+    // Update in memory
+    final messageList = _messagesByConversation[conversationId];
+    if (messageList != null) {
+      final index = messageList.indexWhere((m) => m.id == updatedMessage.id);
+      if (index != -1) {
+        messageList[index] = updatedMessage;
+        _updateConversationWithMessage(conversationId, updatedMessage);
+        notifyListeners();
+      }
+    }
+  }
+
+  void _handleMessageDelete(Map<String, dynamic> data) async {
+    final messageData = data['message'] as Map<String, dynamic>?;
+    if (messageData == null) return;
+
+    final messageId = messageData['id'] as int?;
+    if (messageId == null) return;
+
+    // Determine conversation ID
+    String conversationId;
+    if (messageData['group_id'] != null) {
+      conversationId = _groupConversationId(messageData['group_id']);
+    } else {
+      final senderId = messageData['sender_id'];
+      final recipientId = messageData['recipient_id'];
+      final peerId = senderId == _currentUser?.id ? recipientId : senderId;
+      if (peerId == null) return;
+      conversationId = _dmConversationId(peerId);
+    }
+
+    await _database.deleteMessage(messageId);
+
+    // Update in memory
+    final messageList = _messagesByConversation[conversationId];
+    if (messageList != null) {
+      messageList.removeWhere((m) => m.id == messageId);
+      notifyListeners();
+    }
+  }
+
+  void _handleConversationDelete(Map<String, dynamic> data) async {
+    final conversationId = data['conversation_id'] as String?;
+    if (conversationId == null) return;
+
+    await _database.deleteConversation(conversationId);
+    await _database.deleteAllMessagesForConversation(conversationId);
+
+    // Update in memory
+    _messagesByConversation.remove(conversationId);
+    _conversations.remove(conversationId);
+    notifyListeners();
   }
 
   void _handleAck(Map<String, dynamic> data) async {
@@ -1263,6 +1488,8 @@ class MessageProvider with ChangeNotifier {
         isRead: status == 'read',
         createdAt: createdAtUtc,
         createdAtUnix: finalCreatedAtUnix,
+        replyToId: pendingMessage.replyToId,
+        replyTo: pendingMessage.replyTo,
       );
 
       // Replace in message list and re-sort by ID
@@ -1331,7 +1558,7 @@ class MessageProvider with ChangeNotifier {
     // Update conversation in database
     if (isGroup) {
       final existing = _conversations[conversationId];
-      final group = existing?.group ?? Group(id: message.groupId!, name: 'Group ${message.groupId}', icon: '', memberCount: 0);
+      final group = existing?.group ?? Group(id: message.groupId!, name: 'Group ${message.groupId}', icon: '', memberCount: 0, creatorId: 0);
       await _database.upsertConversation(ConversationsCompanion.insert(
         conversationId: conversationId,
         conversationType: conversationTypeToString(ConversationType.group),
@@ -1344,6 +1571,8 @@ class MessageProvider with ChangeNotifier {
         groupName: Value(group.name),
         groupIcon: Value(group.icon),
         groupMemberCount: Value(group.memberCount),
+        groupIsPublic: Value(group.isPublic),
+        groupCreatorId: Value(group.creatorId),
         lastMessageContent: Value(message.content),
         lastMessageTime: Value(message.createdAt),
         lastMessageCreatedAtUnix: Value(message.createdAtUnix),
@@ -1603,6 +1832,7 @@ class MessageProvider with ChangeNotifier {
               name: g.name,
               icon: g.icon,
               memberCount: members.length,
+              creatorId: g.creatorId,
             ),
           );
         }
@@ -1712,6 +1942,7 @@ class MessageProvider with ChangeNotifier {
                 name: 'Group $numericId',
                 icon: '',
                 memberCount: 0,
+                creatorId: 0,
               ))
           : null,
       lastMessage: lastMessage,
@@ -1782,6 +2013,7 @@ class MessageProvider with ChangeNotifier {
                 name: 'Group $numericId',
                 icon: '',
                 memberCount: 0,
+                creatorId: 0,
               ))
           : null,
       lastMessage: message,
@@ -1803,6 +2035,8 @@ class MessageProvider with ChangeNotifier {
       groupName: Value(conversation.group?.name),
       groupIcon: Value(conversation.group?.icon),
       groupMemberCount: Value(conversation.group?.memberCount),
+      groupIsPublic: Value(conversation.group?.isPublic),
+      groupCreatorId: Value(conversation.group?.creatorId),
       lastMessageContent: Value(message.content),
       lastMessageTime: Value(message.createdAt),
       lastMessageCreatedAtUnix: Value(message.createdAtUnix),
@@ -1851,6 +2085,7 @@ class MessageProvider with ChangeNotifier {
     int? groupId,
     required String content,
     required String messageType,
+    int? replyToId,
   }) async {
     // Check network connectivity
     if (!_isOnline) {
@@ -1877,6 +2112,7 @@ class MessageProvider with ChangeNotifier {
         groupId: groupId,
         content: content,
         messageType: messageType,
+        replyToId: replyToId,
       );
       return;
     }
@@ -1889,6 +2125,7 @@ class MessageProvider with ChangeNotifier {
       recipientId: recipientId,
       content: content,
       messageType: messageType,
+      replyToId: replyToId,
     );
   }
 

@@ -345,4 +345,21 @@ class AuthProvider with ChangeNotifier {
     _user = null;
     notifyListeners();
   }
+
+  Future<void> blockUser(int targetUserId) async {
+    await _apiService.post('/users/block/$targetUserId', {});
+  }
+
+  Future<void> unblockUser(int targetUserId) async {
+    await _apiService.post('/users/unblock/$targetUserId', {});
+  }
+
+  Future<List<User>> getBlockedUsers() async {
+    final response = await _apiService.get('/users/blocks');
+    if (response is Map && response['users'] is List) {
+      final list = response['users'] as List;
+      return list.map((item) => User.fromJson(Map<String, dynamic>.from(item))).toList();
+    }
+    return [];
+  }
 }

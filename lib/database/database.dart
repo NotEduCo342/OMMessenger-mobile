@@ -13,7 +13,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration {
@@ -43,6 +43,28 @@ class AppDatabase extends _$AppDatabase {
           await m.createTable(conversations);
           await m.createTable(groupReadStates);
         }
+
+        if (from < 5) {
+          await m.addColumn(messages, messages.replyToId);
+          await m.addColumn(messages, messages.replyToMessageContent);
+          await m.addColumn(messages, messages.version);
+          await m.addColumn(pendingMessages, pendingMessages.replyToId);
+        }
+
+        if (from < 6) {
+          await customStatement('DROP TABLE IF EXISTS conversations;');
+          await m.createTable(conversations);
+        }
+
+        if (from < 7) {
+          await customStatement('DROP TABLE IF EXISTS conversations;');
+          await m.createTable(conversations);
+        }
+
+        if (from < 8) {
+          await customStatement('DROP TABLE IF EXISTS conversations;');
+          await m.createTable(conversations);
+        }
       },
     );
   }
@@ -55,6 +77,13 @@ class AppDatabase extends _$AppDatabase {
       message,
       mode: InsertMode.insertOrReplace,
     );
+  }
+
+  Future<int> deleteMessage(int serverId) async {
+    print('DB DELETE MESSAGE CALLED FOR SERVER_ID: $serverId');
+    final rows = await (delete(messages)..where((m) => m.serverId.equals(serverId))).go();
+    print('DB DELETE MESSAGE ROWS AFFECTED: $rows');
+    return rows;
   }
 
   (String kind, int id) _parseConversationId(String conversationId) {
@@ -230,6 +259,73 @@ class AppDatabase extends _$AppDatabase {
                   (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
               m.id.isSmallerThanValue(oldestKeptId)))
         .go();
+  }
+
+  /// Delete messages that were removed from the server in a given range
+  Future<int> deleteMessagesInRangeNotIncluded(
+    String conversationId,
+    int minServerId,
+    List<int> includedServerIds,
+  ) async {
+    final parsed = _parseConversationId(conversationId);
+    
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      return (delete(messages)
+            ..where((m) =>
+                m.groupId.equals(groupId) &
+                m.serverId.isNotNull() &
+                m.serverId.isBiggerOrEqualValue(minServerId) &
+                m.serverId.isNotIn(includedServerIds)))
+          .go();
+    } else {
+      final userId = parsed.$2;
+      return (delete(messages)
+            ..where((m) =>
+                ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
+                 (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
+                m.serverId.isNotNull() &
+                m.serverId.isBiggerOrEqualValue(minServerId) &
+                m.serverId.isNotIn(includedServerIds)))
+          .go();
+    }
+  }
+
+  /// Delete all server messages for a conversation (when server returns empty)
+  Future<int> deleteAllServerMessagesForConversation(String conversationId) {
+    final parsed = _parseConversationId(conversationId);
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      return (delete(messages)
+            ..where((m) => m.groupId.equals(groupId) & m.serverId.isNotNull()))
+          .go();
+    } else {
+      final userId = parsed.$2;
+      return (delete(messages)
+            ..where((m) =>
+                ((m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
+                 (m.senderId.equals(userId) & m.isSentByMe.equals(false))) &
+                m.serverId.isNotNull()))
+          .go();
+    }
+  }
+
+  /// Delete all local and server messages for a conversation
+  Future<int> deleteAllMessagesForConversation(String conversationId) {
+    final parsed = _parseConversationId(conversationId);
+    if (parsed.$1 == 'group') {
+      final groupId = parsed.$2;
+      return (delete(messages)
+            ..where((m) => m.groupId.equals(groupId)))
+          .go();
+    } else {
+      final userId = parsed.$2;
+      return (delete(messages)
+            ..where((m) =>
+                (m.recipientId.equals(userId) & m.isSentByMe.equals(true)) |
+                (m.senderId.equals(userId) & m.isSentByMe.equals(false))))
+          .go();
+    }
   }
 
   // ==================== Pending Message Operations ====================

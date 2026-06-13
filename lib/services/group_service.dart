@@ -19,7 +19,20 @@ class GroupService {
 
     final response = await _api.post('/groups', body);
     if (response is Map<String, dynamic>) {
-      return Group.fromJson(response);
+      final group = Group.fromJson(response);
+      if (group.memberCount == 0) {
+        return Group(
+          id: group.id,
+          name: group.name,
+          icon: group.icon,
+          memberCount: 1,
+          description: group.description,
+          isPublic: group.isPublic,
+          handle: group.handle,
+          creatorId: group.creatorId,
+        );
+      }
+      return group;
     }
     throw Exception('Failed to create group');
   }
@@ -91,5 +104,45 @@ class GroupService {
       return response;
     }
     throw Exception('Failed to create invite link');
+  }
+
+  Future<Group> updateGroup(
+    int groupId, {
+    required String name,
+    String? description,
+    bool isPublic = false,
+    String? handle,
+  }) async {
+    final body = {
+      'name': name.trim(),
+      'description': (description ?? '').trim(),
+      'is_public': isPublic,
+      if (isPublic) 'handle': (handle ?? '').trim(),
+    };
+    final response = await _api.put('/groups/$groupId', body);
+    if (response is Map<String, dynamic>) {
+      return Group.fromJson(response);
+    }
+    throw Exception('Failed to update group');
+  }
+
+  Future<void> addMember(int groupId, int userId) async {
+    await _api.post('/groups/$groupId/members', {'user_id': userId});
+  }
+
+  Future<void> removeMember(int groupId, int userId) async {
+    await _api.delete('/groups/$groupId/members/$userId');
+  }
+
+  Future<Group> uploadGroupAvatar(int groupId, String filePath) async {
+    final response = await _api.postMultipartFile(
+      '/groups/$groupId/avatar',
+      fieldName: 'avatar',
+      filePath: filePath,
+    );
+    if (response is Map<String, dynamic>) {
+      return Group.fromJson(response);
+    }
+    throw Exception('Failed to upload group avatar');
   }
 }

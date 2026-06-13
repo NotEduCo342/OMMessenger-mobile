@@ -3,26 +3,31 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../providers/auth_provider.dart';
 import '../services/group_service.dart';
 import '../models/group.dart';
 
-class GroupCreateScreen extends StatefulWidget {
-  const GroupCreateScreen({super.key});
+class GroupEditScreen extends StatefulWidget {
+  final Group group;
+  const GroupEditScreen({super.key, required this.group});
 
   @override
-  State<GroupCreateScreen> createState() => _GroupCreateScreenState();
+  State<GroupEditScreen> createState() => _GroupEditScreenState();
 }
 
-class _GroupCreateScreenState extends State<GroupCreateScreen> {
+class _GroupEditScreenState extends State<GroupEditScreen> {
+  static const _storage = FlutterSecureStorage();
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  final _handleController = TextEditingController();
-  bool _isPublic = false;
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _handleController;
+  late bool _isPublic;
   bool _isSubmitting = false;
   String? _error;
   File? _avatarFile;
+  String? _accessToken;
 
   bool _isCheckingHandle = false;
   bool? _isHandleAvailable;
@@ -32,7 +37,13 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
   @override
   void initState() {
     super.initState();
+    _nameController = TextEditingController(text: widget.group.name);
+    _descriptionController = TextEditingController(text: widget.group.description);
+    _handleController = TextEditingController(text: widget.group.handle ?? '');
+    _isPublic = widget.group.isPublic;
+    _isHandleAvailable = widget.group.isPublic ? true : null;
     _handleController.addListener(_onHandleChanged);
+    _loadToken();
   }
 
   void _onHandleChanged() {
@@ -45,6 +56,13 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
     });
 
     if (handle.isEmpty) return;
+
+    if (handle.toLowerCase() == widget.group.handle?.toLowerCase()) {
+      setState(() {
+        _isHandleAvailable = true;
+      });
+      return;
+    }
 
     if (!RegExp(r'^[a-zA-Z0-9_]{3,32}$').hasMatch(handle)) {
       setState(() {
@@ -69,6 +87,17 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
         });
       }
     });
+  }
+
+  Future<void> _loadToken() async {
+    try {
+      final token = await _storage.read(key: 'access_token');
+      if (mounted) {
+        setState(() {
+          _accessToken = token;
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -99,7 +128,6 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
       });
       return;
     }
-    
     setState(() {
       _isSubmitting = true;
       _error = null;
@@ -107,7 +135,8 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
 
     try {
       final service = GroupService();
-      Group group = await service.createGroup(
+      Group group = await service.updateGroup(
+        widget.group.id,
         name: _nameController.text,
         description: _descriptionController.text,
         isPublic: _isPublic,
@@ -123,7 +152,7 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Failed to create group';
+        _error = 'Failed to update group';
       });
     } finally {
       if (mounted) {
@@ -138,7 +167,7 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Group'),
+        title: const Text('Edit Group'),
       ),
       body: SafeArea(
         child: Padding(
@@ -153,8 +182,15 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
                       CircleAvatar(
                         radius: 50,
                         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        backgroundImage: _avatarFile != null ? FileImage(_avatarFile!) : null,
-                        child: _avatarFile == null
+                        backgroundImage: _avatarFile != null
+                            ? FileImage(_avatarFile!)
+                            : (widget.group.icon.isNotEmpty
+                                ? CachedNetworkImageProvider(
+                                    widget.group.icon,
+                                    headers: _accessToken != null ? {'Authorization': 'Bearer $_accessToken'} : null,
+                                  )
+                                : null) as ImageProvider?,
+                        child: _avatarFile == null && widget.group.icon.isEmpty
                             ? const Icon(Icons.group, size: 50, color: Colors.grey)
                             : null,
                       ),
@@ -205,6 +241,9 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
                   onChanged: (value) {
                     setState(() {
                       _isPublic = value;
+                      if (_isPublic) {
+                        _onHandleChanged();
+                      }
                     });
                   },
                 ),
@@ -213,7 +252,8 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
                   TextFormField(
                     controller: _handleController,
                     decoration: InputDecoration(
-                      labelText: 'Handle (e.g. omdevs)',
+                      labelText: 'Group handle',
+                      prefixText: '@',
                       border: const OutlineInputBorder(),
                       suffixIcon: _isCheckingHandle
                           ? const Padding(
@@ -243,22 +283,22 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
                   ),
                 ],
                 if (_error != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                   Text(
                     _error!,
                     style: TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ],
-                const SizedBox(height: 16),
-                ElevatedButton(
+                const SizedBox(height: 24),
+                FilledButton(
                   onPressed: _isSubmitting ? null : _submit,
                   child: _isSubmitting
                       ? const SizedBox(
-                          height: 18,
-                          width: 18,
+                          height: 20,
+                          width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Create Group'),
+                      : const Text('Save Changes'),
                 ),
               ],
             ),

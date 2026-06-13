@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../models/group.dart';
 import '../models/user.dart';
 import '../services/group_service.dart';
 import '../widgets/user_avatar.dart';
+import '../providers/auth_provider.dart';
+import 'group_edit_screen.dart';
+import 'group_add_members_screen.dart';
+import '../providers/message_provider.dart';
 
 class GroupDetailsScreen extends StatefulWidget {
   final Group group;
@@ -17,6 +22,7 @@ class GroupDetailsScreen extends StatefulWidget {
 class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
   final _service = GroupService();
 
+  late Group _group;
   bool _loadingMembers = true;
   String? _error;
   List<User> _members = [];
@@ -29,6 +35,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
   @override
   void initState() {
     super.initState();
+    _group = widget.group;
     _loadMembers();
   }
 
@@ -125,15 +132,37 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     );
   }
 
-  @override
   Widget build(BuildContext context) {
-    final group = widget.group;
+    final group = _group;
     final privacyLabel = group.isPublic ? 'Public group' : 'Private group';
     final privacyIcon = group.isPublic ? Icons.public : Icons.lock;
+    final currentUserId = context.read<AuthProvider>().user?.id;
+    final isAdmin = currentUserId == group.creatorId;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Group details'),
+        actions: [
+          if (isAdmin)
+            IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: () async {
+                final updatedGroup = await Navigator.push<Group>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GroupEditScreen(group: group),
+                  ),
+                );
+                if (!context.mounted) return;
+                if (updatedGroup != null) {
+                  context.read<MessageProvider>().addOrUpdateGroupConversation(updatedGroup);
+                  setState(() {
+                    _group = updatedGroup;
+                  });
+                }
+              },
+            ),
+        ],
       ),
       body: SafeArea(
         child: RefreshIndicator(
@@ -145,7 +174,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
               const SizedBox(height: 16),
               _buildInviteSection(context),
               const SizedBox(height: 16),
-              _buildMembersSection(context),
+              _buildMembersSection(context, isAdmin),
               const SizedBox(height: 24),
               OutlinedButton.icon(
                 onPressed: _leaveGroup,
@@ -183,17 +212,10 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        CircleAvatar(
+        UserAvatar(
+          username: group.name,
+          avatarUrl: group.icon,
           radius: 28,
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          child: Text(
-            group.name.isNotEmpty ? group.name[0].toUpperCase() : 'G',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -344,13 +366,34 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     );
   }
 
-  Widget _buildMembersSection(BuildContext context) {
+  Widget _buildMembersSection(BuildContext context, bool isAdmin) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Members',
-          style: Theme.of(context).textTheme.titleMedium,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Members',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (isAdmin)
+              TextButton.icon(
+                icon: const Icon(Icons.person_add, size: 18),
+                label: const Text('Add'),
+                onPressed: () async {
+                  final success = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => GroupAddMembersScreen(groupId: _group.id),
+                    ),
+                  );
+                  if (success == true && mounted) {
+                    _loadMembers();
+                  }
+                },
+              )
+          ],
         ),
         const SizedBox(height: 8),
         if (_loadingMembers)
@@ -363,20 +406,89 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                 ),
           )
         else
-          ..._members.map((member) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: UserAvatar(
-                  username: member.username,
-                  avatarUrl: member.avatar,
-                  radius: 18,
-                  showProgress: false,
-                ),
-                title: Text(
-                  member.fullName.isNotEmpty ? member.fullName : member.username,
-                ),
-                subtitle: Text('@${member.username}'),
-              )),
+          ..._members.map((member) {
+            final isCreator = member.id == _group.creatorId;
+            final canKick = isAdmin && member.id != context.read<AuthProvider>().user?.id;
+            
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: UserAvatar(
+                avatarUrl: member.avatar,
+                username: member.username,
+                radius: 18,
+              ),
+              title: Text(
+                member.fullName ?? member.username,
+              ),
+              subtitle: Text('@${member.username}'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isCreator)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'Admin',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ),
+                  if (canKick)
+                    IconButton(
+                      icon: const Icon(Icons.person_remove, size: 20),
+                      color: Theme.of(context).colorScheme.error,
+                      onPressed: () => _kickMember(member),
+                    ),
+                ],
+              ),
+            );
+          }),
       ],
     );
+  }
+
+  Future<void> _kickMember(User member) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove ${member.fullName ?? member.username}?'),
+        content: const Text('This will remove them from the group.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _service.removeMember(_group.id, member.id);
+      if (mounted) {
+        _loadMembers();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove member: $e')),
+        );
+      }
+    }
   }
 }

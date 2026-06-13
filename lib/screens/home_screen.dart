@@ -16,6 +16,7 @@ import 'chat_screen.dart';
 import 'group_create_screen.dart';
 import 'group_discover_screen.dart';
 import 'group_invite_join_screen.dart';
+import 'blocked_users_screen.dart';
 import 'settings_screen.dart';
 import 'user_search_screen.dart';
 
@@ -45,6 +46,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  String? _selectedConversationId;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -123,79 +126,91 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _showStartMenu() {
-    showModalBottomSheet<void>(
+  void _confirmDeleteConversation(String conversationId) {
+    final messageProvider = context.read<MessageProvider>();
+    final conversation = messageProvider.getConversation(conversationId);
+    if (conversation == null) return;
+
+    final isGroup = conversation.type == ConversationType.group;
+    bool deleteForEveryone = false;
+
+    showDialog(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('New chat'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const UserSearchScreen()),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.group_add),
-                title: const Text('Create group'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const GroupCreateScreen()),
-                  );
-                  if (!context.mounted) return;
-                  if (result is Group) {
-                    final provider = context.read<MessageProvider>();
-                    await provider.addOrUpdateGroupConversation(result, notify: false);
-                    provider.openConversation('group_${result.id}');
-                    provider.loadMessages('group_${result.id}');
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ChatScreen(
-                          conversationId: 'group_${result.id}',
-                          type: ConversationType.group,
-                          group: result,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Delete Chat'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Are you sure you want to delete this chat? This action is not recoverable and all media will be lost.',
+                    style: TextStyle(height: 1.4),
+                  ),
+                  if (!isGroup) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: deleteForEveryone,
+                          onChanged: (val) {
+                            setDialogState(() {
+                              deleteForEveryone = val ?? false;
+                            });
+                          },
                         ),
-                      ),
-                    );
-                  }
-                },
+                        const Expanded(
+                          child: Text('Also delete for the receiver'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
-              ListTile(
-                leading: const Icon(Icons.public),
-                title: const Text('Discover groups'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const GroupDiscoverScreen()),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.link),
-                title: const Text('Join by invite'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const GroupInviteJoinScreen()),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(context); // Close dialog
+                    
+                    // Clear selection first
+                    setState(() {
+                      _selectedConversationId = null;
+                    });
+
+                    try {
+                      // Perform deletion
+                      await context.read<MessageProvider>().deleteConversation(
+                            conversationId,
+                            everyone: deleteForEveryone,
+                          );
+
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Chat deleted')),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Failed to delete chat')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text(
+                    'Delete',
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -207,64 +222,90 @@ class _HomeScreenState extends State<HomeScreen> {
     final messageProvider = context.watch<MessageProvider>();
     final conversations = messageProvider.conversations;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('OM Messenger'),
-        actions: [
-          // Connection status indicator
-          StreamBuilder<ConnectionStatus>(
-            stream: messageProvider.connectionStream,
-            initialData: messageProvider.connectionStatus,
-            builder: (context, snapshot) {
-              final status = snapshot.data ?? ConnectionStatus.disconnected;
-              return Padding(
-                padding: const EdgeInsets.only(right: 12.0),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        // Manual ping refresh
-                        context.read<MessageProvider>().handleAppResumed();
-                      },
-                      child: StreamBuilder<int?>(
-                        stream: messageProvider.pingMsStream,
-                        initialData: messageProvider.pingMs,
-                        builder: (context, pingSnapshot) {
-                          final ping = pingSnapshot.data;
-                          final text = (status == ConnectionStatus.connected && ping != null)
-                              ? '${ping}ms'
-                              : '--';
-                          return Text(
-                            text,
-                            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                ),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: status == ConnectionStatus.connected
-                            ? Colors.green
-                            : status == ConnectionStatus.connecting ||
-                                    status == ConnectionStatus.reconnecting
-                                ? Colors.orange
-                                : Colors.red,
-                      ),
-                    ),
-                  ],
+    return PopScope(
+      canPop: _selectedConversationId == null,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        setState(() {
+          _selectedConversationId = null;
+        });
+      },
+      child: Scaffold(
+        appBar: _selectedConversationId != null
+            ? AppBar(
+                leading: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _selectedConversationId = null;
+                    });
+                  },
                 ),
-              );
-            },
-          ),
-        ],
-      ),
+                title: const Text('1 selected'),
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () => _confirmDeleteConversation(_selectedConversationId!),
+                  ),
+                ],
+              )
+            : AppBar(
+                title: const Text('OM Messenger'),
+                actions: [
+                  // Connection status indicator
+                  StreamBuilder<ConnectionStatus>(
+                    stream: messageProvider.connectionStream,
+                    initialData: messageProvider.connectionStatus,
+                    builder: (context, snapshot) {
+                      final status = snapshot.data ?? ConnectionStatus.disconnected;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 12.0),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                // Manual ping refresh
+                                context.read<MessageProvider>().handleAppResumed();
+                              },
+                              child: StreamBuilder<int?>(
+                                stream: messageProvider.pingMsStream,
+                                initialData: messageProvider.pingMs,
+                                builder: (context, pingSnapshot) {
+                                  final ping = pingSnapshot.data;
+                                  final text = (status == ConnectionStatus.connected && ping != null)
+                                      ? '${ping}ms'
+                                      : '--';
+                                  return Text(
+                                    text,
+                                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                        ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: status == ConnectionStatus.connected
+                                    ? Colors.green
+                                    : status == ConnectionStatus.connecting ||
+                                            status == ConnectionStatus.reconnecting
+                                        ? Colors.orange
+                                        : Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
       drawer: _HomeDrawer(user: user),
       body: Column(
         children: [
@@ -292,31 +333,61 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: conversations.isEmpty
                 ? Center(
-                    child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline,
-                    size: 80,
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No conversations yet',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Start chatting with your friends!',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                        ),
-                  ),
-                ],
-              ),
-            )
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.forum_rounded,
+                              size: 80,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 32),
+                          Text(
+                            'Welcome to OM Messenger',
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Connect with your friends, share media, and join vibrant communities. Start chatting now!',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  height: 1.5,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 32),
+                          FilledButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const UserSearchScreen()),
+                              );
+                            },
+                            icon: const Icon(Icons.edit_square),
+                            label: const Text('Start a New Chat'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
           : RefreshIndicator(
               onRefresh: () async {
                 await messageProvider.refreshConversations();
@@ -324,16 +395,54 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListView.builder(
                 itemCount: conversations.length,
                 itemBuilder: (context, index) {
-                  return _ConversationTile(conversation: conversations[index]);
+                  final conversation = conversations[index];
+                  return _ConversationTile(
+                    conversation: conversation,
+                    isSelected: _selectedConversationId == conversation.conversationId,
+                    onTap: () {
+                      if (_selectedConversationId != null) {
+                        setState(() {
+                          if (_selectedConversationId == conversation.conversationId) {
+                            _selectedConversationId = null;
+                          } else {
+                            _selectedConversationId = conversation.conversationId;
+                          }
+                        });
+                      } else {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(
+                              conversationId: conversation.conversationId,
+                              type: conversation.type,
+                              user: conversation.otherUser,
+                              group: conversation.group,
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    onLongPress: () {
+                      setState(() {
+                        _selectedConversationId = conversation.conversationId;
+                      });
+                    },
+                  );
                 },
               ),
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showStartMenu,
-        child: const Icon(Icons.add),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const UserSearchScreen()),
+            );
+          },
+          child: const Icon(Icons.edit),
+        ),
       ),
     );
   }
@@ -341,8 +450,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
-  const _ConversationTile({required this.conversation});
+  const _ConversationTile({
+    required this.conversation,
+    required this.isSelected,
+    required this.onTap,
+    required this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -351,11 +468,16 @@ class _ConversationTile extends StatelessWidget {
         ? timeago.format(lastMessage.createdAt, locale: 'en_short')
         : '';
     final isGroup = conversation.type == ConversationType.group;
-    final title = isGroup
-        ? (conversation.group?.name ?? 'Group')
-        : (conversation.otherUser?.fullName.isNotEmpty == true
-            ? conversation.otherUser!.fullName
-            : (conversation.otherUser?.username ?? 'User'));
+    final currentUser = context.watch<AuthProvider>().user;
+    final isSelf = !isGroup && conversation.otherUser?.id == currentUser?.id;
+
+    final title = isSelf
+        ? 'Saved Messages'
+        : (isGroup
+            ? (conversation.group?.name ?? 'Group')
+            : (conversation.otherUser?.fullName.isNotEmpty == true
+                ? conversation.otherUser!.fullName
+                : (conversation.otherUser?.username ?? 'User')));
     final avatarLabel = isGroup
         ? (conversation.group?.name ?? 'Group')
         : (conversation.otherUser?.username ?? 'User');
@@ -371,20 +493,12 @@ class _ConversationTile extends StatelessWidget {
             : '');
 
     return InkWell(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ChatScreen(
-              conversationId: conversation.conversationId,
-              type: conversation.type,
-              user: conversation.otherUser,
-              group: conversation.group,
-            ),
-          ),
-        );
-      },
+      onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary.withOpacity(0.08)
+            : null,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           border: Border(
@@ -397,32 +511,42 @@ class _ConversationTile extends StatelessWidget {
         child: Row(
           children: [
             // Avatar
-            Stack(
-              children: [
-                UserAvatar(
-                  username: avatarLabel,
-                  avatarUrl: avatarUrl,
-                  radius: 28,
-                ),
-                if (!isGroup && (conversation.otherUser?.isOnline ?? false))
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Theme.of(context).scaffoldBackgroundColor,
-                          width: 2,
-                        ),
-                      ),
+            isSelf
+                ? CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    child: Icon(
+                      Icons.bookmark,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                      size: 28,
                     ),
+                  )
+                : Stack(
+                    children: [
+                      UserAvatar(
+                        username: avatarLabel,
+                        avatarUrl: avatarUrl,
+                        radius: 28,
+                      ),
+                      if (!isGroup && (conversation.otherUser?.isOnline ?? false))
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Theme.of(context).scaffoldBackgroundColor,
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
             const SizedBox(width: 12),
             // Content
             Expanded(
@@ -459,7 +583,7 @@ class _ConversationTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          '${subtitlePrefix}${lastMessage?.content ?? 'No messages yet'}',
+                          '${subtitlePrefix}${lastMessage?.messageType == 'image' ? '📷 Photo' : (lastMessage?.content ?? 'No messages yet')}',
                           style: TextStyle(
                             fontSize: 14,
                             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
@@ -580,7 +704,7 @@ class _HomeDrawer extends StatelessWidget {
                 if (!context.mounted) return;
                 if (result is Group) {
                   final provider = context.read<MessageProvider>();
-                  await provider.addOrUpdateGroupConversation(result, notify: false);
+                  await provider.addOrUpdateGroupConversation(result);
                   provider.openConversation('group_${result.id}');
                   provider.loadMessages('group_${result.id}');
                   Navigator.push(
@@ -615,6 +739,17 @@ class _HomeDrawer extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const GroupInviteJoinScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.block),
+              title: const Text('Blocked users'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BlockedUsersScreen()),
                 );
               },
             ),

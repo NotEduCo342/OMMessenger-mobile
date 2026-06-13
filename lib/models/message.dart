@@ -12,10 +12,15 @@ class Message {
   final String status;
   final bool isDelivered;
   final bool isRead;
+  final int? replyToId;
+  final Message? replyTo;
+  final int version;
   // Canonical message time (UTC). Use createdAtLocal for display.
   final DateTime createdAt;
   // Canonical message time in UTC seconds since epoch.
   final int createdAtUnix;
+
+  String? get replyToMessageContent => replyTo?.content;
 
   Message({
     required this.id,
@@ -29,6 +34,9 @@ class Message {
     required this.status,
     required this.isDelivered,
     required this.isRead,
+    this.replyToId,
+    this.replyTo,
+    this.version = 1,
     required this.createdAt,
     required this.createdAtUnix,
   });
@@ -51,6 +59,8 @@ class Message {
       createdAtUnix: now.millisecondsSinceEpoch ~/ 1000,
     );
   }
+
+  bool get isEdited => version > 1;
 
   DateTime get createdAtLocal => createdAt.toLocal();
 
@@ -84,6 +94,9 @@ class Message {
       status: json['status'],
       isDelivered: json['is_delivered'] ?? false,
       isRead: json['is_read'] ?? false,
+      replyToId: json['reply_to_id'],
+      replyTo: json['reply_to'] != null ? Message.fromJson(json['reply_to']) : null,
+      version: json['version'] ?? 1,
       createdAt: createdAtUtc,
       createdAtUnix: createdAtUnix,
     );

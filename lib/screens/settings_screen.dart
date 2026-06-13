@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
+import '../providers/message_provider.dart';
 import '../widgets/user_avatar.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -520,6 +521,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     TextButton(
                       onPressed: () {
+                        context.read<MessageProvider>().clearDatabase();
                         context.read<AuthProvider>().logout();
                         Navigator.pop(context);
                         Navigator.pop(context);

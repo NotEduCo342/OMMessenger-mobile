@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/constants.dart';
+import '../models/message.dart';
 
 class ApiService {
   final _storage = const FlutterSecureStorage();
@@ -46,14 +47,16 @@ class ApiService {
   }
 
   Future<dynamic> post(String endpoint, Map<String, dynamic> body) async {
-    final headers = await _getHeaders();
     final url = '${AppConstants.baseUrl}$endpoint';
     _dlog('POST $url body=${_truncate(jsonEncode(body))}');
-    final response = await _makeRequestResponse(() => http.post(
-      Uri.parse(url),
-      headers: headers,
-      body: jsonEncode(body),
-    ));
+    final response = await _makeRequestResponse(() async {
+      final headers = await _getHeaders();
+      return http.post(
+        Uri.parse(url),
+        headers: headers,
+        body: jsonEncode(body),
+      );
+    });
 
     _dlog('POST $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
@@ -61,14 +64,16 @@ class ApiService {
   }
 
   Future<dynamic> put(String endpoint, Map<String, dynamic> body) async {
-    final headers = await _getHeaders();
     final url = '${AppConstants.baseUrl}$endpoint';
     _dlog('PUT $url body=${_truncate(jsonEncode(body))}');
-    final response = await _makeRequestResponse(() => http.put(
-      Uri.parse(url),
-      headers: headers,
-      body: jsonEncode(body),
-    ));
+    final response = await _makeRequestResponse(() async {
+      final headers = await _getHeaders();
+      return http.put(
+        Uri.parse(url),
+        headers: headers,
+        body: jsonEncode(body),
+      );
+    });
 
     _dlog('PUT $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
@@ -76,13 +81,15 @@ class ApiService {
   }
 
   Future<dynamic> delete(String endpoint) async {
-    final headers = await _getHeaders();
     final url = '${AppConstants.baseUrl}$endpoint';
     _dlog('DELETE $url');
-    final response = await _makeRequestResponse(() => http.delete(
-      Uri.parse(url),
-      headers: headers,
-    ));
+    final response = await _makeRequestResponse(() async {
+      final headers = await _getHeaders();
+      return http.delete(
+        Uri.parse(url),
+        headers: headers,
+      );
+    });
 
     _dlog('DELETE $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
 
@@ -95,22 +102,22 @@ class ApiService {
     String endpoint, {
     Map<String, String>? extraHeaders,
   }) async {
-    final headers = await _getHeaders();
-    final merged = {
-      ...headers,
-      if (extraHeaders != null) ...extraHeaders,
-    };
-
     final url = '${AppConstants.baseUrl}$endpoint';
     if (kDebugMode) {
-      final ifNoneMatch = merged['If-None-Match'];
-      _dlog('GET $url if-none-match=${ifNoneMatch ?? 'none'}');
+      _dlog('GET $url (deferred headers)');
     }
 
-    final response = await _makeRequestResponse(() => http.get(
-          Uri.parse(url),
-          headers: merged,
-        ));
+    final response = await _makeRequestResponse(() async {
+      final headers = await _getHeaders();
+      final merged = {
+        ...headers,
+        if (extraHeaders != null) ...extraHeaders,
+      };
+      return http.get(
+        Uri.parse(url),
+        headers: merged,
+      );
+    });
 
     _dlog('GET $url -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
     return response;
@@ -155,6 +162,35 @@ class ApiService {
     final response = await _makeRequestResponse(sendOnce);
     _dlog('MULTIPART POST $uri -> ${response.statusCode} etag=${response.headers['etag']} body=${_truncate(response.body)}');
     return _handleResponse(response);
+  }
+
+  /// Edit a message.
+  Future<Message> editMessage(int messageId, String newContent) async {
+    final response = await put(
+      '/messages/$messageId',
+      {'content': newContent},
+    );
+    return Message.fromJson(response);
+  }
+
+  /// Delete a message.
+  Future<void> deleteMessage(int messageId) async {
+    await delete('/messages/$messageId');
+  }
+
+  /// Delete/clear a conversation.
+  Future<void> deleteConversation(String conversationId, bool everyone) async {
+    await delete('/conversations/$conversationId?everyone=$everyone');
+  }
+
+  /// Upload an attachment to the backend and return the URL.
+  Future<String> uploadAttachment(String filePath) async {
+    final response = await postMultipartFile(
+      '/media/attachments',
+      fieldName: 'attachment',
+      filePath: filePath,
+    );
+    return response['url'] as String;
   }
 
   /// Wrapper that handles token refresh on 401

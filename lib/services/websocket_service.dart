@@ -228,14 +228,19 @@ class WebSocketService {
     required int recipientId,
     required String content,
     String messageType = 'text',
+    int? replyToId,
   }) {
-    send({
+    final payload = {
       'type': 'chat',
       'client_id': clientId,
       'recipient_id': recipientId,
       'content': content,
       'message_type': messageType,
-    });
+    };
+    if (replyToId != null) {
+      payload['reply_to_id'] = replyToId;
+    }
+    send(payload);
   }
 
   void sendGroupChatMessage({
@@ -243,14 +248,19 @@ class WebSocketService {
     required int groupId,
     required String content,
     String messageType = 'text',
+    int? replyToId,
   }) {
-    send({
+    final payload = {
       'type': 'chat',
       'client_id': clientId,
       'group_id': groupId,
       'content': content,
       'message_type': messageType,
-    });
+    };
+    if (replyToId != null) {
+      payload['reply_to_id'] = replyToId;
+    }
+    send(payload);
   }
 
   void sendTyping(int recipientId, bool isTyping) {

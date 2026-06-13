@@ -12,6 +12,7 @@ class OfflineQueueService {
     int? groupId,
     required String content,
     required String messageType,
+    int? replyToId,
   }) onMessageReady;
   
   Timer? _retryTimer;
@@ -59,6 +60,7 @@ class OfflineQueueService {
     int? groupId,
     required String content,
     String messageType = 'text',
+    int? replyToId,
   }) async {
     await _db.insertPendingMessage(
       PendingMessagesCompanion(
@@ -67,6 +69,7 @@ class OfflineQueueService {
         groupId: drift.Value(groupId),
         content: drift.Value(content),
         messageType: drift.Value(messageType),
+        replyToId: drift.Value(replyToId),
         retryCount: const drift.Value(0),
         nextRetryAt: drift.Value(DateTime.now()),
         createdAt: drift.Value(DateTime.now()),
@@ -94,6 +97,7 @@ class OfflineQueueService {
             groupId: message.groupId,
             content: message.content,
             messageType: message.messageType,
+            replyToId: message.replyToId,
           );
 
           // Don't delete yet - wait for ACK

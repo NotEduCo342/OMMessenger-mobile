@@ -18,6 +18,9 @@ class Messages extends Table {
   IntColumn get createdAtUnix => integer().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
   BoolColumn get isSentByMe => boolean()();
+  IntColumn get replyToId => integer().nullable()();
+  TextColumn get replyToMessageContent => text().nullable()();
+  IntColumn get version => integer().withDefault(const Constant(1))();
 }
 
 // Pending messages - queue for offline/failed messages
@@ -32,6 +35,7 @@ class PendingMessages extends Table {
   DateTimeColumn get nextRetryAt => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
   TextColumn get error => text().nullable()();
+  IntColumn get replyToId => integer().nullable()();
 }
 
 // Conversations - cached conversation metadata
@@ -47,7 +51,10 @@ class Conversations extends Table {
   TextColumn get groupName => text().nullable()();
   TextColumn get groupIcon => text().nullable()();
   IntColumn get groupMemberCount => integer().nullable()();
+  BoolColumn get groupIsPublic => boolean().nullable()();
+  IntColumn get groupCreatorId => integer().nullable()();
   TextColumn get lastMessageContent => text().nullable()();
+  TextColumn get lastMessageType => text().nullable()();
   DateTimeColumn get lastMessageTime => dateTime().nullable()();
   IntColumn get lastMessageCreatedAtUnix => integer().nullable()();
   IntColumn get unreadCount => integer().withDefault(const Constant(0))();

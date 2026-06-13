@@ -3,11 +3,11 @@ class AppConstants {
   // Fallbacks are provided for ease of development.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL', 
-    defaultValue: 'https://api-om.wexun.tech/api',
+    defaultValue: 'http://localhost:8082/api',
   );
   
   static const String wsUrl = String.fromEnvironment(
     'WS_URL', 
-    defaultValue: 'wss://api-om.wexun.tech/ws',
+    defaultValue: 'ws://localhost:8082/ws',
   );
 }

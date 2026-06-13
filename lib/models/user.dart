@@ -6,6 +6,7 @@ class User {
   final String avatar;
   final bool isOnline;
   final DateTime? lastSeen;
+  final bool isBlocked;
 
   User({
     required this.id,
@@ -15,6 +16,7 @@ class User {
     required this.avatar,
     required this.isOnline,
     this.lastSeen,
+    this.isBlocked = false,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -28,6 +30,7 @@ class User {
       lastSeen: json['last_seen'] != null
           ? DateTime.parse(json['last_seen'])
           : null,
+      isBlocked: json['is_blocked'] ?? false,
     );
   }
 
@@ -40,6 +43,7 @@ class User {
       'avatar': avatar,
       'is_online': isOnline,
       'last_seen': lastSeen?.toIso8601String(),
+      'is_blocked': isBlocked,
     };
   }
 }
