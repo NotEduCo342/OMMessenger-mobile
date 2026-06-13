@@ -3,11 +3,11 @@ class AppConstants {
   // Fallbacks are provided for ease of development.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL', 
-    defaultValue: 'http://localhost:8082/api',
+    defaultValue: 'https://om.noteduco342.ir/api',
   );
   
   static const String wsUrl = String.fromEnvironment(
     'WS_URL', 
-    defaultValue: 'ws://localhost:8082/ws',
+    defaultValue: 'wss://om.noteduco342.ir/ws',
   );
 }
