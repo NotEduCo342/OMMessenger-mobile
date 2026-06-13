@@ -98,6 +98,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
+                        tooltip: 'Clear search',
                         icon: const Icon(Icons.clear),
                         onPressed: () {
                           _searchController.clear();

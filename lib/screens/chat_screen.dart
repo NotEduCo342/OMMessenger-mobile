@@ -430,6 +430,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   radius: 24,
                   backgroundColor: Theme.of(context).colorScheme.primary,
                   child: IconButton(
+                    tooltip: 'Send message',
                     icon: const Icon(Icons.send, color: Colors.white, size: 20),
                     onPressed: _sendMessage,
                   ),
