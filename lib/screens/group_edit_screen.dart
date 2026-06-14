@@ -201,6 +201,7 @@ class _GroupEditScreenState extends State<GroupEditScreen> {
                           radius: 18,
                           backgroundColor: Theme.of(context).colorScheme.primary,
                           child: IconButton(
+                            tooltip: 'Change group avatar',
                             icon: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
                             onPressed: _pickAvatar,
                             padding: EdgeInsets.zero,
