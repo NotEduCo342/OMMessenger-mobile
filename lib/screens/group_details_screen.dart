@@ -146,6 +146,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
           if (isAdmin)
             IconButton(
               icon: const Icon(Icons.edit),
+              tooltip: 'Edit group',
               onPressed: () async {
                 final updatedGroup = await Navigator.push<Group>(
                   context,
@@ -442,6 +443,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                   if (canKick)
                     IconButton(
                       icon: const Icon(Icons.person_remove, size: 20),
+                      tooltip: 'Remove member',
                       color: Theme.of(context).colorScheme.error,
                       onPressed: () => _kickMember(member),
                     ),

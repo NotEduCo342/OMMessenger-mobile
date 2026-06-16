@@ -235,6 +235,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ? AppBar(
                 leading: IconButton(
                   icon: const Icon(Icons.close),
+                  tooltip: 'Close selection',
                   onPressed: () {
                     setState(() {
                       _selectedConversationId = null;
@@ -245,6 +246,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 actions: [
                   IconButton(
                     icon: const Icon(Icons.delete, color: Colors.red),
+                    tooltip: 'Delete selected',
                     onPressed: () => _confirmDeleteConversation(_selectedConversationId!),
                   ),
                 ],
