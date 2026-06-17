@@ -166,6 +166,7 @@ class _GroupCreateScreenState extends State<GroupCreateScreen> {
                           backgroundColor: Theme.of(context).colorScheme.primary,
                           child: IconButton(
                             icon: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
+                            tooltip: 'Change avatar',
                             onPressed: _pickAvatar,
                             padding: EdgeInsets.zero,
                           ),
