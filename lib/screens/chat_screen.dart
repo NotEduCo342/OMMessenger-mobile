@@ -614,6 +614,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                       IconButton(
+                        tooltip: 'Cancel reply or edit',
                         icon: const Icon(Icons.close),
                         onPressed: () {
                           setState(() {
@@ -679,6 +680,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Row(
                     children: [
                   IconButton(
+                    tooltip: 'Attach image',
                     icon: const Icon(Icons.attach_file),
                     onPressed: _isUploadingImage ? null : _sendImage,
                     color: Theme.of(context).colorScheme.primary,
@@ -716,6 +718,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     radius: 24,
                     backgroundColor: Theme.of(context).colorScheme.primary,
                     child: IconButton(
+                      tooltip: 'Send message',
                       icon: const Icon(Icons.send, color: Colors.white, size: 20),
                       onPressed: _sendMessage,
                     ),
