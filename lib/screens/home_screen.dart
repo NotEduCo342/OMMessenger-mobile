@@ -234,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: _selectedConversationId != null
             ? AppBar(
                 leading: IconButton(
+                  tooltip: 'Close selection',
                   icon: const Icon(Icons.close),
                   onPressed: () {
                     setState(() {
@@ -244,6 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: const Text('1 selected'),
                 actions: [
                   IconButton(
+                    tooltip: 'Delete chat',
                     icon: const Icon(Icons.delete, color: Colors.red),
                     onPressed: () => _confirmDeleteConversation(_selectedConversationId!),
                   ),
@@ -435,6 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
         floatingActionButton: FloatingActionButton(
+          tooltip: 'New chat',
           onPressed: () {
             Navigator.push(
               context,
