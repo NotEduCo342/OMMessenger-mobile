@@ -48,7 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _muteLoaded = false;
   final _apiService = ApiService();
   bool _isUploadingImage = false;
-  
+
   Message? _editingMessage;
   Message? _replyingToMessage;
   final Set<int> _deletingMessageIds = {};
@@ -63,7 +63,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (widget.type == ConversationType.dm && widget.user != null) {
         context.read<MessageProvider>().upsertConversationPeer(widget.user!);
       }
-      context.read<MessageProvider>().setActiveConversation(widget.conversationId);
+      context
+          .read<MessageProvider>()
+          .setActiveConversation(widget.conversationId);
       context.read<MessageProvider>().openConversation(widget.conversationId);
       context.read<MessageProvider>().loadMessages(widget.conversationId);
       _loadMuteState();
@@ -130,16 +132,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadMoreMessages() async {
     if (_isLoadingMore) return;
-    
+
     setState(() {
       _isLoadingMore = true;
     });
 
     try {
       await context.read<MessageProvider>().loadMessages(
-        widget.conversationId,
-        loadMore: true,
-      );
+            widget.conversationId,
+            loadMore: true,
+          );
     } finally {
       if (mounted) {
         setState(() {
@@ -165,7 +167,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _isTyping = false;
           final groupId = _getGroupId(context);
           if (groupId != null) {
-            context.read<MessageProvider>().sendGroupTypingIndicator(groupId, false);
+            context
+                .read<MessageProvider>()
+                .sendGroupTypingIndicator(groupId, false);
           }
         }
       });
@@ -186,7 +190,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _isTyping = false;
         final recipientId = _getDmRecipientId(context);
         if (recipientId != null) {
-          context.read<MessageProvider>().sendTypingIndicator(recipientId, false);
+          context
+              .read<MessageProvider>()
+              .sendTypingIndicator(recipientId, false);
         }
       }
     });
@@ -197,7 +203,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
 
     if (_editingMessage != null) {
-      context.read<MessageProvider>().editMessage(_editingMessage!.id, text, widget.conversationId);
+      context
+          .read<MessageProvider>()
+          .editMessage(_editingMessage!.id, text, widget.conversationId);
       setState(() {
         _editingMessage = null;
       });
@@ -205,12 +213,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (widget.type == ConversationType.group) {
         final groupId = _getGroupId(context);
         if (groupId != null) {
-          context.read<MessageProvider>().sendGroupMessage(groupId, text, replyToMessage: _replyingToMessage);
+          context.read<MessageProvider>().sendGroupMessage(groupId, text,
+              replyToMessage: _replyingToMessage);
         }
       } else {
         final recipientId = _getDmRecipientId(context);
         if (recipientId != null) {
-          context.read<MessageProvider>().sendMessage(recipientId, text, replyToMessage: _replyingToMessage);
+          context.read<MessageProvider>().sendMessage(recipientId, text,
+              replyToMessage: _replyingToMessage);
         }
       }
       setState(() {
@@ -225,12 +235,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (widget.type == ConversationType.group) {
         final groupId = _getGroupId(context);
         if (groupId != null) {
-          context.read<MessageProvider>().sendGroupTypingIndicator(groupId, false);
+          context
+              .read<MessageProvider>()
+              .sendGroupTypingIndicator(groupId, false);
         }
       } else {
         final recipientId = _getDmRecipientId(context);
         if (recipientId != null) {
-          context.read<MessageProvider>().sendTypingIndicator(recipientId, false);
+          context
+              .read<MessageProvider>()
+              .sendTypingIndicator(recipientId, false);
         }
       }
     }
@@ -251,22 +265,24 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _deletingMessageIds.add(message.id);
     });
-    
+
     // Wait for the shredding animation
     await Future.delayed(const Duration(milliseconds: 600));
-    
+
     if (mounted) {
       setState(() {
         _deletingMessageIds.remove(message.id);
       });
-      context.read<MessageProvider>().deleteMessage(message.id, widget.conversationId);
+      context
+          .read<MessageProvider>()
+          .deleteMessage(message.id, widget.conversationId);
     }
   }
 
   Future<void> _sendImage() async {
     final picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    
+
     if (image == null) return;
 
     setState(() {
@@ -279,12 +295,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (widget.type == ConversationType.group) {
         final groupId = _getGroupId(context);
         if (groupId != null) {
-          context.read<MessageProvider>().sendGroupMessage(groupId, url, messageType: 'image');
+          context
+              .read<MessageProvider>()
+              .sendGroupMessage(groupId, url, messageType: 'image');
         }
       } else {
         final recipientId = _getDmRecipientId(context);
         if (recipientId != null) {
-          context.read<MessageProvider>().sendMessage(recipientId, url, messageType: 'image');
+          context
+              .read<MessageProvider>()
+              .sendMessage(recipientId, url, messageType: 'image');
         }
       }
 
@@ -317,7 +337,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final messageProvider = context.watch<MessageProvider>();
     final messages = messageProvider.getMessages(widget.conversationId);
     final conversation = messageProvider.getConversation(widget.conversationId);
-    final isGroup = (conversation?.type ?? widget.type) == ConversationType.group;
+    final isGroup =
+        (conversation?.type ?? widget.type) == ConversationType.group;
     final group = conversation?.group ?? widget.group;
     final user = conversation?.otherUser ?? widget.user;
     final dmRecipientId = _getDmRecipientId(context);
@@ -391,7 +412,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           username: isGroup
                               ? (group?.name ?? 'Group')
                               : (user?.username ?? 'User'),
-                          avatarUrl: isGroup ? (group?.icon ?? '') : (user?.avatar ?? ''),
+                          avatarUrl: isGroup
+                              ? (group?.icon ?? '')
+                              : (user?.avatar ?? ''),
                           radius: 20,
                         ),
                         if (!isGroup && (user?.isOnline ?? false))
@@ -405,7 +428,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                 color: Colors.green,
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: Theme.of(context).appBarTheme.backgroundColor ?? Colors.white,
+                                  color: Theme.of(context)
+                                          .appBarTheme
+                                          .backgroundColor ??
+                                      Colors.white,
                                   width: 2,
                                 ),
                               ),
@@ -429,9 +455,13 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     if (!isSelf) ...[
-                      if (isGroup && messageProvider.getTypingUserIds(widget.conversationId).isNotEmpty)
+                      if (isGroup &&
+                          messageProvider
+                              .getTypingUserIds(widget.conversationId)
+                              .isNotEmpty)
                         Text(
-                          messageProvider.getTypingIndicatorText(widget.conversationId),
+                          messageProvider
+                              .getTypingIndicatorText(widget.conversationId),
                           style: TextStyle(
                             fontSize: 13,
                             fontStyle: FontStyle.italic,
@@ -441,7 +471,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       else if (!isGroup && isOtherUserTyping)
                         const Text(
                           'typing...',
-                          style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+                          style: TextStyle(
+                              fontSize: 13, fontStyle: FontStyle.italic),
                         )
                       else if (!isGroup && (user?.isOnline ?? false))
                         const Text(
@@ -471,7 +502,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       'No messages yet\nStart the conversation!',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.5),
                       ),
                     ),
                   )
@@ -490,7 +524,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               message.senderId == currentUserId &&
                               group?.id != null &&
                               message.id > 0) {
-                            final readers = messageProvider.getGroupReadersForMessage(
+                            final readers =
+                                messageProvider.getGroupReadersForMessage(
                               group!.id,
                               message.id,
                             );
@@ -504,7 +539,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             isMe: currentUserId != null &&
                                 message.senderId == currentUserId,
                             readByLabel: readByLabel,
-                            isDeleting: _deletingMessageIds.contains(message.id),
+                            isDeleting:
+                                _deletingMessageIds.contains(message.id),
                             onReply: () {
                               setState(() {
                                 _replyingToMessage = message;
@@ -546,7 +582,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               child: const SizedBox(
                                 width: 20,
                                 height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ),
                           ),
@@ -560,7 +597,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (_isUploadingImage)
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   color: Theme.of(context).cardColor,
                   child: Row(
                     children: [
@@ -584,7 +622,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (_editingMessage != null || _replyingToMessage != null)
                 Container(
                   color: Theme.of(context).colorScheme.surfaceVariant,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
                       Icon(
@@ -597,7 +636,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _editingMessage != null ? 'Edit Message' : 'Reply to Message',
+                              _editingMessage != null
+                                  ? 'Edit Message'
+                                  : 'Reply to Message',
                               style: TextStyle(
                                 color: Theme.of(context).colorScheme.primary,
                                 fontWeight: FontWeight.bold,
@@ -614,6 +655,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                       IconButton(
+                        tooltip: 'Cancel reply or edit',
                         icon: const Icon(Icons.close),
                         onPressed: () {
                           setState(() {
@@ -629,7 +671,10 @@ class _ChatScreenState extends State<ChatScreen> {
               if (!isGroup && user != null && user.isBlocked)
                 Container(
                   padding: const EdgeInsets.all(16),
-                  color: Theme.of(context).colorScheme.errorContainer.withOpacity(0.2),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withOpacity(0.2),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -643,9 +688,13 @@ class _ChatScreenState extends State<ChatScreen> {
                       TextButton(
                         onPressed: () async {
                           try {
-                            await context.read<AuthProvider>().unblockUser(user.id);
+                            await context
+                                .read<AuthProvider>()
+                                .unblockUser(user.id);
                             if (context.mounted) {
-                              context.read<MessageProvider>().refreshConversations();
+                              context
+                                  .read<MessageProvider>()
+                                  .refreshConversations();
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('User unblocked')),
                               );
@@ -653,7 +702,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           } catch (e) {
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed to unblock: $e')),
+                                SnackBar(
+                                    content: Text('Failed to unblock: $e')),
                               );
                             }
                           }
@@ -675,54 +725,59 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ],
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Row(
                     children: [
-                  IconButton(
-                    icon: const Icon(Icons.attach_file),
-                    onPressed: _isUploadingImage ? null : _sendImage,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      focusNode: _focusNode,
-                      onChanged: _onTextChanged,
-                      decoration: InputDecoration(
-                        hintText: 'Message',
-                        filled: true,
-                        fillColor: Theme.of(context).brightness == Brightness.dark
-                            ? const Color(0xFF17212B)
-                            : const Color(0xFFF5F5F5),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
+                      IconButton(
+                        tooltip: 'Attach image',
+                        icon: const Icon(Icons.attach_file),
+                        onPressed: _isUploadingImage ? null : _sendImage,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          focusNode: _focusNode,
+                          onChanged: _onTextChanged,
+                          decoration: InputDecoration(
+                            hintText: 'Message',
+                            filled: true,
+                            fillColor:
+                                Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFF17212B)
+                                    : const Color(0xFFF5F5F5),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
+                          ),
+                          maxLines: null,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) {
+                            _sendMessage();
+                            _focusNode.requestFocus();
+                          },
                         ),
                       ),
-                      maxLines: null,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) {
-                        _sendMessage();
-                        _focusNode.requestFocus();
-                      },
-                    ),
+                      const SizedBox(width: 8),
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        child: IconButton(
+                          tooltip: 'Send message',
+                          icon: const Icon(Icons.send,
+                              color: Colors.white, size: 20),
+                          onPressed: _sendMessage,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    child: IconButton(
-                      icon: const Icon(Icons.send, color: Colors.white, size: 20),
-                      onPressed: _sendMessage,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
             ],
           ),
         ],
@@ -734,7 +789,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (widget.type == ConversationType.group) return null;
     final fromWidget = widget.user?.id;
     if (fromWidget != null) return fromWidget;
-    final convo = context.read<MessageProvider>().getConversation(widget.conversationId);
+    final convo =
+        context.read<MessageProvider>().getConversation(widget.conversationId);
     final fromConvo = convo?.otherUser?.id;
     if (fromConvo != null) return fromConvo;
     if (widget.conversationId.startsWith('user_')) {
@@ -747,7 +803,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (widget.type == ConversationType.dm) return null;
     final fromWidget = widget.group?.id;
     if (fromWidget != null) return fromWidget;
-    final convo = context.read<MessageProvider>().getConversation(widget.conversationId);
+    final convo =
+        context.read<MessageProvider>().getConversation(widget.conversationId);
     final fromConvo = convo?.group?.id;
     if (fromConvo != null) return fromConvo;
     if (widget.conversationId.startsWith('group_')) {
@@ -797,7 +854,8 @@ class _MessageBubble extends StatefulWidget {
   State<_MessageBubble> createState() => _MessageBubbleState();
 }
 
-class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProviderStateMixin {
+class _MessageBubbleState extends State<_MessageBubble>
+    with SingleTickerProviderStateMixin {
   late AnimationController _shredController;
   late Animation<double> _shredAnimation;
 
@@ -880,7 +938,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
           child: Align(
             alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
             child: Row(
-              mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+              mainAxisAlignment:
+                  isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (showSenderInfo) ...[
@@ -895,7 +954,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                 ],
                 ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * (showSenderInfo ? 0.70 : 0.78),
+                    maxWidth: MediaQuery.sizeOf(context).width *
+                        (showSenderInfo ? 0.70 : 0.78),
                   ),
                   child: InkWell(
                     borderRadius: BorderRadius.only(
@@ -909,7 +969,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => ImageViewerScreen(imageUrl: message.content),
+                            builder: (_) =>
+                                ImageViewerScreen(imageUrl: message.content),
                           ),
                         );
                       }
@@ -917,7 +978,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                     onSecondaryTap: () => _showMessageOptions(context),
                     onLongPress: () => _showMessageOptions(context),
                     child: Container(
-                      padding: const EdgeInsets.only(left: 12, right: 12, top: 8, bottom: 6),
+                      padding: const EdgeInsets.only(
+                          left: 12, right: 12, top: 8, bottom: 6),
                       margin: EdgeInsets.only(
                         left: isMe ? 48 : 0,
                         right: isMe ? 0 : 48,
@@ -945,13 +1007,15 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                                   fontWeight: FontWeight.bold,
                                   color: getSenderColor(
                                     senderUser?.username ?? 'User',
-                                    Theme.of(context).brightness == Brightness.dark,
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark,
                                   ),
                                 ),
                               ),
                               const SizedBox(height: 4),
                             ],
-                            if (message.replyToId != null && message.replyToMessageContent != null) ...[
+                            if (message.replyToId != null &&
+                                message.replyToMessageContent != null) ...[
                               Container(
                                 padding: const EdgeInsets.all(8),
                                 margin: const EdgeInsets.only(bottom: 6),
@@ -960,7 +1024,11 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border(
                                     left: BorderSide(
-                                      color: isMe ? Colors.white : Theme.of(context).colorScheme.primary,
+                                      color: isMe
+                                          ? Colors.white
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .primary,
                                       width: 3,
                                     ),
                                   ),
@@ -981,26 +1049,34 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                                 borderRadius: BorderRadius.circular(8),
                                 child: ConstrainedBox(
                                   constraints: BoxConstraints(
-                                    maxWidth: math.min(600.0, MediaQuery.sizeOf(context).width * 0.6),
-                                    maxHeight: math.min(600.0, MediaQuery.sizeOf(context).height * 0.6),
+                                    maxWidth: math.min(600.0,
+                                        MediaQuery.sizeOf(context).width * 0.6),
+                                    maxHeight: math.min(
+                                        600.0,
+                                        MediaQuery.sizeOf(context).height *
+                                            0.6),
                                   ),
                                   child: AuthImage(
                                     imageUrl: message.content,
                                     fit: BoxFit.cover,
-                                    errorWidget: const Icon(Icons.broken_image, size: 100),
+                                    errorWidget: const Icon(Icons.broken_image,
+                                        size: 100),
                                   ),
                                 ),
                               )
                             else
                               Directionality(
-                                textDirection: isRtl ? ui.TextDirection.rtl : ui.TextDirection.ltr,
+                                textDirection: isRtl
+                                    ? ui.TextDirection.rtl
+                                    : ui.TextDirection.ltr,
                                 child: Text(
                                   message.content,
                                   style: TextStyle(
                                     fontSize: 16,
                                     color: textColor,
                                   ),
-                                  textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                                  textAlign:
+                                      isRtl ? TextAlign.right : TextAlign.left,
                                 ),
                               ),
                             const SizedBox(height: 2),
@@ -1071,7 +1147,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
   }
 
   void _showMessageOptions(BuildContext context) {
-    if (widget.message.content.trim().isEmpty && widget.message.messageType != 'image') return;
+    if (widget.message.content.trim().isEmpty &&
+        widget.message.messageType != 'image') return;
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1084,7 +1161,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                 leading: const Icon(Icons.copy),
                 title: const Text('Copy'),
                 onTap: () async {
-                  await Clipboard.setData(ClipboardData(text: widget.message.content));
+                  await Clipboard.setData(
+                      ClipboardData(text: widget.message.content));
                   if (ctx.mounted) {
                     Navigator.pop(ctx);
                   }
@@ -1114,7 +1192,8 @@ class _MessageBubbleState extends State<_MessageBubble> with SingleTickerProvide
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text('Delete', style: TextStyle(color: Colors.red)),
+                  title:
+                      const Text('Delete', style: TextStyle(color: Colors.red)),
                   onTap: () {
                     Navigator.pop(ctx);
                     widget.onDelete?.call();
